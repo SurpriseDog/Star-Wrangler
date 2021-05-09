@@ -4,7 +4,7 @@ SurpriseDog presents two scripts to help you tame those fobidden wildcard * impo
 ----
 
 
- Star Namer will go through a list of star imports for a script and replace them with the actual functions to be imported.
+Star Namer will go through a list of wildcard * imports for a script and replace them with the actual functions to be imported.
 
 	For example: from common import *
 
@@ -18,7 +18,7 @@ Example: ./star_name.py common.py script_name.py
 ----
 
 
- Star Wrangler will go through the list of those imported functions and generate a code file containing all of the functions used and do so in the correct order. Then it will examine each function individually so that any depencies are also copied over. Finally a list of necessary imports are generated at the top.
+Star Wrangler will go through the list of those imported functions and generate a .py file containing all of the functions code used and do so in the correct order. Then it will examine each function individually so that any depencies are also copied over. Finally a list of necessary imports are generated at the top.
 
 The way this works is that each section of code is examined with pylint to see if there are any undefined functions, then it compares that list with the list of all functions in the target module. Make sure pylint is installed before use: https://www.pylint.org/#install
 
