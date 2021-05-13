@@ -16,9 +16,10 @@ from collections import OrderedDict as odict
 import shared
 import star_namer
 
-from star_common import srun, json_loader, tab_printer, plural, search_list
+from star_common import srun, json_loader, tab_printer, plural
 from star_common import error, mkdir, samepath, indenter, rfs
 from star_common import auto_columns as auto_cols
+from star_common import warn
 
 # Loaded module members
 MYMOD = star_namer.load_mod(sys.argv[1])
@@ -217,8 +218,12 @@ def get_func_name(func):
 ################################################################################
 # Main
 
+def get_output_name():
+	return shared.OUTPUT_NAME.rstrip('.py')
+
 
 def get_code_words(filename):
+	print("\n\nProcessing:", filename)
 	functions = odict()     # Functions and code found in MYMOD
 
 	with open(filename) as f:
@@ -227,14 +232,16 @@ def get_code_words(filename):
 	# Scrape imports from source:
 	source_imports = set()
 	mod_name = os.path.basename(MYMOD.__file__).rstrip('.py')
-	import_expr = 'from ' + mod_name + ' import'
 	common_imports = []
 	out = []
 	deleted_lines = 0
 	source = source.splitlines()
+
 	for num, line in enumerate(source):
 		if line.startswith('import ') or (line.startswith('from') and ' import ' in line):
-			if line.startswith(import_expr):
+			if line.startswith('from ' + mod_name + ' import') or \
+			line.startswith('from ' + get_output_name() + ' import'):
+				print(line)
 				common_imports += re.sub('.*import ', '', line).split()
 				deleted_lines += 1
 				continue
@@ -246,11 +253,11 @@ def get_code_words(filename):
 			_func_start = num - deleted_lines
 			break
 		out.append(line)
-	source = out + source[num:]
+	#source = out + source[num:]
 
 
 	if not common_imports:
-		error("Could not find any common imports in", filename, "for module name:", mod_name)
+		warn("Could not find any common imports in", filename, "for module name:", mod_name)
 
 	# Read through every line in the source code file, branching into the imports for more functions
 	if '*' in common_imports:
@@ -289,20 +296,23 @@ def get_code_words(filename):
 
 def main():
 
-	print('Mod Functions:')
-	auto_cols([(key, str(val).replace('\n', ' ')) for key, val in sorted(MM.items())], crop=[0, 200])
-	print("\n")
-
 	filenames = sys.argv[2:]
 	if not filenames:
 		error("You must specify at least one filename")
+	for name in filenames:
+		if not os.path.exists(name):
+			error(name, "does not exist")
 
 	if ONEFILE:
 		filename = filenames[0]
 		output_name = os.path.join('/tmp/publish', os.path.basename(filename))
 	else:
-		output_name = os.path.join('/tmp/publish', shared.OUTPUT_NAME)
+		output_name = os.path.join('/tmp/publish', get_output_name()+'.py')
 	mkdir('/tmp/publish')
+
+	print('Mod Functions:')
+	auto_cols([(key, str(val).replace('\n', ' ')) for key, val in sorted(MM.items())], crop=[0, 200])
+	print("\n")
 
 	functions = odict()         # Dict of function names to code
 	file_functions = dict()     # Dict filenames to function dicts
@@ -344,7 +354,7 @@ def main():
 		if not any([word in func_names for word in words]):
 			owl(line)
 		else:
-			print("Skipping locally ref import line:", line)
+			print("Skipping locally referenced import line:", line)
 	if MYIMPORTS:
 		owl("\n")
 
@@ -374,9 +384,9 @@ def main():
 	for filename, sub in file_functions.items():
 		if len(filenames) > 1:
 			print(filename, "functions to be imported:")
-		print("\nimport", shared.OUTPUT_NAME.rstrip('.py'), "as common")
+		print("\nimport", get_output_name(), "as common")
 		words = [get_func_name(func) for func in reversed(sub.keys())]
-		for line in indenter(', '.join(words), header='from common import ', wrap=80):
+		for line in indenter(', '.join(words), header='from ' + get_output_name() + ' import ', wrap=80):
 			print(line.rstrip(','))
 		print('\n')
 
@@ -384,7 +394,7 @@ def main():
 	print(rfs(os.path.getsize(output_name)), 'of code saved to', output_name)
 	srun("chmod +x " + output_name)
 	print("Copy to script directory with:")
-	print('cp', output_name, os.path.join(os.path.dirname(os.path.realpath(filename)), shared.OUTPUT_NAME))
+	print('cp', output_name, os.path.join(os.path.dirname(os.path.realpath(filename)), get_output_name()+'.py'))
 
 
 if __name__ == "__main__":

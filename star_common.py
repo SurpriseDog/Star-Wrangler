@@ -11,41 +11,47 @@ import subprocess
 from shutil import get_terminal_size
 
 
-def sig(num, digits=3):
-	"Return number formatted for significant digits (formerly get_significant)"
-	ret = ("{0:." + str(digits) + "g}").format(num)
-	if 'e' in ret:
-		if abs(num) >= 1:
-			return str(int(num))
+def search_list(expr, the_list, getfirst=False, func='match', ignorecase=True, searcher=None):
+	'''Search for expression in each item in list (or dictionary!)
+	getfirst = Return the first value found, otherwise None
+	searcher = Custom lamda function'''
+
+	if not searcher:
+		# func = dict(search='in').get('search', func)
+		# Avoiding regex now in case substring has a regex escape character
+		if ignorecase:
+			expr = expr.lower()
+		if func in ('in', 'search'):
+			if ignorecase:
+				def searcher(expr, item): 	      # pylint: disable=E0102
+					return expr in item.lower()
+			else:
+				def searcher(expr, item): 		  # pylint: disable=E0102
+					return expr in item
+		elif func == 'match':
+			if ignorecase:
+				def searcher(expr, item): 		  # pylint: disable=E0102
+					return item.lower().startswith(expr)
+			else:
+				def searcher(expr, item): 		  # pylint: disable=E0102
+					return item.startswith(expr)
 		else:
-			return str(num)
-	else:
-		return ret
+			# Could have nested these, but this is faster.
+			raise ValueError("Unknown search type:", func)
+
+	output = []
+	for item in the_list:
+		if searcher(expr, item):
+			if isinstance(the_list, dict):
+				output.append(the_list[item])
+			else:
+				output.append(item)
+			if getfirst:
+				return output[0]
+	return output
 
 
-def rfs(num, mult=1000, digits=3, order=' KMGTPEZY', suffix='B'):
-	'''A "readable" file size
-	mult is the value of a kilobyte in the filesystem. (1000 or 1024)'''
-	if abs(num) < mult:
-		return str(num) + suffix
-	# Faster than using math.log:
-	for x in range(len(order) - 1, -1, -1):
-		magnitude = mult**x
-		if abs(num) >= magnitude:
-			return sig(num / magnitude, digits) + ' ' + (order[x] + suffix).rstrip()
-
-
-def samepath(*paths):
-	"Are any of these file pathname duplicates?"
-	return bool(len({os.path.abspath(path) for path in paths}) != len(paths))
-
-
-def mkdir(target, exist_ok=True, **kargs):
-	"Make a directory without fuss"
-	os.makedirs(target, exist_ok=exist_ok, **kargs)
-
-
-def print_columns(args, col_width=20, columns=None, just='left', space=0, wrap=True):
+def print_columns(args, col_width=20, columns=None, just='left', space=0, wrap=True):	# pylint: disable=W0621
 	'''Print columns of col_width size.
 	columns = manual list of column widths
 	just = justification: left, right or center'''
@@ -91,7 +97,7 @@ def print_columns(args, col_width=20, columns=None, just='left', space=0, wrap=T
 		print_columns(line, col_width, columns, just, space, wrap=False)
 
 
-def auto_columns(array, space=4, manual=None, printme=True, wrap=0, crop=[]):
+def auto_columns(array, space=4, manual=None, printme=True, wrap=0, crop=None):		# pylint: disable=W0621
 	'''Automatically adjust column size
 	Takes in a 2d array and prints it neatly
 	space = spaces between columns
@@ -177,45 +183,43 @@ def auto_columns(array, space=4, manual=None, printme=True, wrap=0, crop=[]):
 	return col_width
 
 
+def sig(num, digits=3):
+	"Return number formatted for significant digits (formerly get_significant)"
+	ret = ("{0:." + str(digits) + "g}").format(num)
+	if 'e' in ret:
+		if abs(num) >= 1:
+			return str(int(num))
+		else:
+			return str(num)
+	else:
+		return ret
+
+
+def rfs(num, mult=1000, digits=3, order=' KMGTPEZY', suffix='B'):
+	'''A "readable" file size
+	mult is the value of a kilobyte in the filesystem. (1000 or 1024)'''
+	if abs(num) < mult:
+		return str(num) + suffix
+	# Faster than using math.log:
+	for x in range(len(order) - 1, -1, -1):
+		magnitude = mult**x
+		if abs(num) >= magnitude:
+			return sig(num / magnitude, digits) + ' ' + (order[x] + suffix).rstrip()
+
+
+def samepath(*paths):
+	"Are any of these file pathname duplicates?"
+	return bool(len({os.path.abspath(path) for path in paths}) != len(paths))
+
+
+def mkdir(target, exist_ok=True, **kargs):
+	"Make a directory without fuss"
+	os.makedirs(target, exist_ok=exist_ok, **kargs)
+
+
 def error(*args, header='\nError:', **kargs):
 	eprint(*args, header=header, v=3, **kargs)
 	sys.exit(1)
-
-
-def search_list(expr, the_list, getfirst=False, func='match', ignorecase=True, searcher=None):
-	'''Search for expression in each item in list (or dictionary!)
-	getfirst = Return the first value found, otherwise None
-	searcher = Custom lamda function'''
-
-	if not searcher:
-		# func = dict(search='in').get('search', func)
-		# Avoiding regex now in case substring has a regex escape character
-		if ignorecase:
-			expr = expr.lower()
-		if func in ('in', 'search'):
-			if ignorecase:
-				def searcher(expr, item): return expr in item.lower()   # pylint: disable=E0102
-			else:
-				def searcher(expr, item): return expr in item           # pylint: disable=E0102
-		elif func == 'match':
-			if ignorecase:
-				def searcher(expr, item): return item.lower().startswith(expr)  # pylint: disable=E0102
-			else:
-				def searcher(expr, item): return item.startswith(expr)          # pylint: disable=E0102
-		else:
-			# Could have nested these, but this is faster.
-			raise ValueError("Unknown search type:", func)
-
-	output = []
-	for item in the_list:
-		if searcher(expr, item):
-			if isinstance(the_list, dict):
-				output.append(the_list[item])
-			else:
-				output.append(item)
-			if getfirst:
-				return output[0]
-	return output
 
 
 def plural(val, word, multiple=None):
@@ -301,7 +305,7 @@ def plural(val, word, multiple=None):
 		return str(val) + ' ' + replacement
 
 
-def indenter(*args, header='', level=0, tab=4, wrap=0, even=False):
+def indenter(*args, header='', level=0, tab=4, wrap=0, even=False):			# pylint: disable=W0621
 	"Break up text into tabbed lines. Wrap at max characters. 0 = Don't wrap"
 
 	if type(tab) == int:
@@ -432,8 +436,8 @@ def flatten(tree):
 	return out
 
 
-def quickrun(*cmd, check=False, encoding='utf-8', errors='replace', mode='w', input=None,
-			 verbose=0, testing=False, ofile=None, trifecta=False, hidewarning = False, **kargs):
+def quickrun(*cmd, check=False, encoding='utf-8', errors='replace', mode='w', input=None,	# pylint: disable=W0622
+			 verbose=0, testing=False, ofile=None, trifecta=False, hidewarning=False, **kargs):
 	'''Run a command, list of commands as arguments or any combination therof and return
 	the output is a list of decoded lines.
 	check    = if the process exits with a non-zero exit code then quit
@@ -489,3 +493,46 @@ def quickrun(*cmd, check=False, encoding='utf-8', errors='replace', mode='w', in
 def srun(*cmds, **kargs):
 	"Split all text before quick run"
 	return quickrun(flatten([str(item).split() for item in cmds]), **kargs)
+
+
+
+'''
+&&&&%%%%%&@@@@&&&%%%%##%%%#%%&@@&&&&%%%%%%/%&&%%%%%%%%%%%&&&%%%%%&&&@@@@&%%%%%%%
+%%%%%%%%&@&(((((#%%&%%%%%%%%%&@@&&&&&&%%%&&&&&%%%%%%%%%%%&&&&%&%#((((/#@@%%%%%%%
+&&%%%%%%&@(*,,,,,,,/%&%%%%%%%&@@&&&&&%%&&&&%%&&%%%%%%%%%%&&&%#*,,,,,,*/&@&%%%%%%
+%%%%%%%&@&/*,,,*,*,,*/%&%%%%%&@@&&&&&&%%&&&&&&&%%%%%%&%%%&&%*,,,,,,,,**#@&&%%%%%
+&&&&&%%&@#(**********,*(#&%%%&@&&&&%%%%%%%%%&&&%%%%%%&%&&#*****,*******#@&&%%%%%
+&&&%%%&&#/***/*****/*,**,*%&%&@@&&&&&&&&&&&&&&&%%%%%%&&#*,,,*/******/***(%&%%%%%
+&&&%%%&%/*****///////**,,,,*/%%&&@@@@@@@@@@@@@@@@&&%#*,,,*,*(///////*****#%&%%%%
+@@&%%#&#/,,,*/(//((((//**,,*/#&@@@@@&&&&&&&&&&@@@@@%(/*,,**/(/(((/(//*,,*(&&%%%%
+&&&%##&#*,,,*////((((/*///(&@&@@&&&#%((//(/###%&@&@@@@#//**//(#(///***,.,/&&%%%%
+%%%%%#%#*,,,**////(///((#&&&%@&%%(/*,,......,,/(#%&&&@@@%((/(/#(///**,,,,(&%%%%%
+&&%%%#%%/,..***//(#(#%%&@@@&@%(*.,,..       ...,.,/#@&@@@&&%#(((///**,..,#%%%%%%
+%&%%%%%#*,****/(##&@@@&@@@@&%*,....           ....,,(&@@@@@@&@&%((//****,(%%%%%%
+%&%%%%%#/,**/#&@@@&@@@@@@@&(*,......    .     ..,..,.(&@@@@@@@&@@@&%#**,*(%%%%%%
+&&%%%%#&#(#&@@@&@@@@@@@@%((#@@%&&((,,,,,..,,(**(%@@&@%##(&@@@@@@@@&&@@%#(%%%%%%%
+&&&%%%%%&&&&&&@@@@@@%###%@(,%&/@@&(%(/*,..,*/%##&&,%@(*&@#((%&@@@@@@&&@&%%%%&&%%
+&&%%%%%%&&&@@@@@@@@#((*#@%,#%%&@#%(/**//,****/(#%%%&&%*(@@*/#(&@@@@@@@&&%%%%%%%%
+&&&%%%%%&@@@@&%#/,,,,*,(/%&@@&((%(*,*,,*,**,,*,*#%(#@@&%((**,,,,*#(%&@@&&%%%%%%%
+&&&%%%%%@@@@%*/*,...,*,,/*#(//#****,***********,**/#/##(/*,*,...,*/*/&@@&%%&%%%%
+&&%%%%%%&@@@(//,....,,*/****/,,/**************/***/,,//**/**,....,*//&@@&%%&%%%%
+&&&%%%%%&@@%(/*,. ...,****/*/(//*%&@@&%%%%%%&&&&//*/(*/**/**......,/*#&@&%&&&&%%
+&&%%%%%%&@@%(**,,....,/**/((/,#&&&&&%#((((((%&&&@&%/*/(/**/*,. ..,,*/((#@&&&&&&%
+%&%%%%%%&&#(/**,..,,,***/((,./%&%&&&@&(/#((#@@&&&%&%,,/((*,/*,,..,,,///(%&%&&&&&
+&&%%%%%%&#,**,.,..,,*(//(/,,.,&&&@#&@@##%(#&@&%%@&&#.,,/(((//*,,..,,**,*&%&&%&&&
+&&%##%%%#/**,,,,..,*/((((*...,,#&##%(#%%&%%###%(%&/,.. **((((/,...,,,,**(%%#%%%&
+&&%####(**,,,.,,.,,/(/(//*,,..../%&(##%&&&%%(#%&#, .. .**//(/(*,,..,.,,**/((#%%%
+&&&%#///*,........,/(((//**,.   ,,(#%%%%%%&#%##**.   ,,*//((((*,........,*//(%%%
+%%%%(/**...       .,/(((///*., .,*(#(%%%%%%%%##/*,..,,*///((/*.      .....**/(%%
+%%%%#(,..          .,/((/(//****,/(((###%#%(#///**,,**/((/((*,          .,.,(%%%
+&&%%%#/*...          ,*/(/(/((%%&#&#(/%./.*%(#%#%#&&(((/(/*,.          ..,**(&%%
+&&%%%%(*.....          ..*((/**(#&&&&&&&%%%&%&&&%(/,*/((*..           .,..*(&&%%
+&&%%%%&#*.      .        */(#/*,,*/((%#%%%%%((**,.*/(#(/,       .       ,(%&%%&%
+%%%%%%&%#//**,..           .**(((*,...,,**,,..*,/((/*,.          ...,,//(#%%%%%%
+%%%&&&%(/*,**,..,,.,..       .,,**//**,*,,,*,////*,,.        .,.,...,,,**//#%&%%
+%%%&&%#/*,*,.    ...      ..         ...  ,.. .       .       ...   ..,,*/(#%&%%
+&&&&&%(((*.*... . .*,.   .           .*%%#(,.          .    .*,. ..,.,,**/(%#&%%
+
+Generated by https://github.com/SurpriseDog/Star-Wrangler
+2021-05-13
+'''

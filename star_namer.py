@@ -3,18 +3,15 @@
 # Usage: ./star_namer.py <module_file> <script_filename>
 # Requires pylint: https://www.pylint.org/#install
 
-
-
 import os
 import sys
 import types
-import subprocess
 import importlib.util
 from inspect import getmembers, isfunction
 
 import shared
 
-from star_common import quickrun, indenter, search_list, warn
+from star_common import quickrun, indenter, search_list, warn, error
 
 def check_pylint():
 	# Check pylint version:
@@ -36,11 +33,11 @@ def check_pylint():
 
 def scrape_wildcard(filename, modvars):
 	"Get variables imported from module in wild * import"
-	error = "W0614: Unused import "
+	err = "W0614: Unused import "
 	unused = []
 	for line in quickrun([PYLINT, filename]):
-		if error in line:
-			unused.append(line.split(error)[1].split()[0])
+		if err in line:
+			unused.append(line.split(err)[1].split()[0])
 
 	out = dict()
 	for name in set(modvars) - set(unused):
@@ -63,7 +60,8 @@ def load_mod(filename, execute=True):
 
 def main():
 	mymod = load_mod(sys.argv[1])
-	modvars = {name:func for name, func in getmembers(mymod, isfunction)}
+	modname = mymod.__name__
+	modvars = dict(getmembers(mymod, isfunction))
 	print("Found defined variables in module", modname+':')
 	for key, val in modvars.items():
 		print(key, val)

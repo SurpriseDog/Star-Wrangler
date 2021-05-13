@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 
 PYLINT = "/usr/bin/pylint"  	# Path to pylint with at least version 2.4
-OUTPUT_NAME = "sd_common.py"	# Name of the file generated
+OUTPUT_NAME = "star_common"		# Name of the file generated
 
 
 HEADER = '''
