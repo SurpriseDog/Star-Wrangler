@@ -4,9 +4,11 @@
 # Written by SurpriseDog at: https://github.com/SurpriseDog
 
 import os
+import re
 import sys
 import time
 import json
+import argparse
 import subprocess
 from shutil import get_terminal_size
 
@@ -49,6 +51,229 @@ def search_list(expr, the_list, getfirst=False, func='match', ignorecase=True, s
 			if getfirst:
 				return output[0]
 	return output
+
+
+def argfixer():
+	'''Fix up args for argparse. Lowers case and turns -args into --args'''
+	out = []
+	for word in sys.argv:
+		if word.startswith('-'):
+			word = word.lower()
+		if re.match('^-[^-]', word):
+			out.append('-' + word)
+		else:
+			out.append(word)
+	return out[1:]
+
+
+def help_parser(parser, show_type=True, sortme=True, wrap=100, tab='  '):
+	'''Print a custom help message from the ArgumentParser class
+		show_type = append the variable type expected after each optional argument.
+		--arg <int> <int> will expect 2 integers after the arg
+		wrap = word wrap instead of using full terminal. 0 = disable
+		sort = sort alphabetically. Positional variables are never sorted.
+		To sort individual groups, add a special key: group.sortme = True
+
+		Warning: If your variable is not in a group, it will not be shown!
+	'''
+	def alias(action):
+		"Return string representing the variable for the leftmost column"
+		if action.option_strings:
+			text = ', '.join(action.option_strings)
+		else:
+			text = action.dest
+		if show_type:
+			if not action.option_strings:
+				text = '<' + text + '>'
+			if action.type and action.type != bool:
+				if action.type == list:
+					typ = '...'
+				else:
+					typ = '<' + str(action.type).replace('class ', '')[2:-2] + '>'
+
+				if isinstance(action.nargs, int):
+					count = action.nargs
+				else:
+					count = 1
+				text += ' ' + ' '.join([typ] * count)
+		return text
+
+	final = []
+	width = 0
+	for group in parser._action_groups:
+		out = []
+		for action in group._group_actions:
+			if action.help and action.help != '==SUPPRESS==':
+				help = list(action.help)
+				help[0] = help[0].title()
+				variable = alias(action)
+				out.append([variable, ''.join(help)])
+				if len(variable) > width:
+					width = len(variable)
+			if sortme or group.__dict__.get('sortme', False):
+				# Sort the group while mainting the order of positional arguments at the top
+				positionals = [out.pop(line) for line in range(len(out) - 1, -1, -1) if out[line][0].startswith('<')]
+				out.sort()
+				out = list(reversed(positionals)) + out
+		final.append(out)
+
+	for group in parser._action_groups:
+		out = final.pop(0)
+		if out:
+			for line in range(len(out)):
+				out[line][0] = tab + out[line][0].ljust(width)
+
+			print()
+			if group.title:
+				print(group.title + ':')
+			if group.description:
+				auto_cols([[tab + group.description]])
+			auto_cols(out, wrap=wrap)
+
+
+def list_get(lis, index, default=''):
+
+	# Fetch a value from a list if it exists, otherwise return default
+	# Now accepts negative indexes
+	length = len(lis)
+	if -length <= index < length:
+		return lis[index]
+	else:
+		return default
+
+
+def undent(text, tab=''):
+	return '\n'.join([tab + line.lstrip() for line in text.splitlines()])
+
+
+def update_parser(lines, parser=None, suppress=False, positionals=False):
+	'''
+	This is a more intuitive method for adding optional arguments.
+	For positional arguments, use the standard syntax.
+
+	Example: basic_args = [\
+	('--alias', 'variable_name', type, default),
+	"help string",
+	...
+	]
+
+	group_basic = parser.add_argument_group('Basic Arguments', '')
+	update_parser(basic_args, group_basic)
+
+	#You only need to include the arguments required, but you can't skip over any.
+		('--alias', '',)        # okay
+		('--alias', type,)      # not okay
+
+	#Substitute the word list with a number like 2 to get that number of args required.
+
+	# See what your arugments are producing with:
+		auto_cols(sorted([[key, repr(val)] for key, val in (vars(parse_args())).items()]))
+
+
+	'''
+
+	# Make sure the loop ends on a help string
+	if not isinstance(lines[-1], str):
+		lines.append("")
+
+	alias = None		#
+	varname = None		# Variable Name
+	default = None		# Default value
+
+	for args in lines:
+
+		# Add help if available
+		if isinstance(args, str):
+			help = undent(args.strip())
+			if help and not help.endswith('.'):
+				last = help.split()[-1]
+				if last[-1].isalnum() and not last.startswith('-'):
+					help = help + '.'
+			if default:
+				help += "  Default: " + str(default)
+
+		if suppress:
+			# Hide the help text:
+			help = argparse.SUPPRESS
+
+		# If on a new tuple line, add_argument
+		if alias or varname:
+			if parser:
+				# Update argument to parser:
+
+				if positionals:
+					parser.add_argument(alias, default=default, nargs=nargs, help=help)
+				else:
+					if typ == bool:
+						parser.add_argument('--' + alias, dest=varname, default=default, action=action, help=help)
+					else:
+						parser.add_argument('--' + alias, dest=varname, default=default, type=typ,
+											nargs=nargs, help=help, metavar='')
+
+			# out.append((alias, varname, typ, default, help))
+			alias = None
+			varname = None
+			help = ""
+
+		# Continue if not on a new tuple line
+		if isinstance(args, str):
+			continue
+
+		# Read the values from the tuple:
+		alias = args[0].lstrip('-')
+
+		varname = list_get(args, 1)
+		if not varname:
+			varname = alias
+
+		default = list_get(args, 3, '')
+
+		typ = list_get(args, 2, type(default))
+		if typ == list:
+			nargs = '*'
+		elif isinstance(typ, int):
+			nargs = typ
+			typ = str
+		else:
+			nargs = '?'
+
+		if typ == bool:
+			if default:
+				action = 'store_false'
+			else:
+				action = 'store_true'
+				default = False
+
+
+def easy_parse(args, positionals=None, allow_abrev=True, title="Optional Arguments", **kargs):
+	''''Add a basic list of optional arguments and simple positional arguments
+	use a tuple of (arg, help) to include a help
+	or simply arg1, arg2
+	'''
+
+	parser = argparse.ArgumentParser(allow_abbrev=allow_abrev, add_help=False, **kargs)
+
+
+	if positionals:
+		group_pos = parser.add_argument_group("Positional Arguments")
+		update_parser(positionals, group_pos, positionals=True)
+
+	group_basic = parser.add_argument_group(title, '')
+	update_parser(args, group_basic)
+
+	#Match help
+	for arg in sys.argv:
+		if re.match('--*h$|--*help$', arg):
+			help_parser(parser)
+			sys.exit(0)
+
+
+	try:
+		args = parser.parse_args(argfixer())
+	except SystemExit:
+		help_parser(parser)
+		sys.exit(1)
+	return args
 
 
 def print_columns(args, col_width=20, columns=None, just='left', space=0, wrap=True):	# pylint: disable=W0621
@@ -490,11 +715,6 @@ def quickrun(*cmd, check=False, encoding='utf-8', errors='replace', mode='w', in
 	return stdout
 
 
-def srun(*cmds, **kargs):
-	"Split all text before quick run"
-	return quickrun(flatten([str(item).split() for item in cmds]), **kargs)
-
-
 
 '''
 &&&&%%%%%&@@@@&&&%%%%##%%%#%%&@@&&&&%%%%%%/%&&%%%%%%%%%%%&&&%%%%%&&&@@@@&%%%%%%%
@@ -534,5 +754,5 @@ def srun(*cmds, **kargs):
 &&&&&%(((*.*... . .*,.   .           .*%%#(,.          .    .*,. ..,.,,**/(%#&%%
 
 Generated by https://github.com/SurpriseDog/Star-Wrangler
-2021-05-13
+2021-05-15
 '''

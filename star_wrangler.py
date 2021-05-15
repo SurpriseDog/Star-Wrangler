@@ -16,20 +16,38 @@ from collections import OrderedDict as odict
 import shared
 import star_namer
 
-from star_common import srun, json_loader, tab_printer, plural
-from star_common import error, mkdir, samepath, indenter, rfs
-from star_common import auto_columns as auto_cols
-from star_common import warn
+from star_common import json_loader, tab_printer, plural, error, mkdir
+from star_common import samepath, indenter, rfs, auto_columns as auto_cols
+from star_common import warn, easy_parse, quickrun as qrun
 
-# Loaded module members
-MYMOD = star_namer.load_mod(sys.argv[1])
-MM = dict(inspect.getmembers(MYMOD))
 MYIMPORTS = odict()         # Required modules to be imported
 FUNC_UNDEF = dict()         # Dict of functions to undefined words
 MODIMPORTS = dict()         # Dict of module : import lines in module
 SRC = dict()                # Dict of modules to source code lines
-ONEFILE = False             # Output as single file or with an additional function file
-MAX_LEVEL = 9               # Max amount of recursion to allow, 0 = unlimited
+
+
+def scrape_imports(source):
+	"Given source code, scrape it's import lines"
+	tree = ast.parse(source)
+	for node in ast.iter_child_nodes(tree):
+		if isinstance(node, (ast.Import, ast.ImportFrom)):
+			for var in node.names:
+				out = [var.name]
+				if var.asname:
+					out += ['as', var.asname]
+				if isinstance(node, ast.ImportFrom):
+					out = ['from', node.module, 'import'] + out
+				else:
+					out = ['import'] + out
+				yield node.lineno - 1, ' '.join(out)
+
+
+def load_imports(module):
+	"Given a module, get it's import lines"
+	if module in MODIMPORTS:
+		return MODIMPORTS[module]
+	MODIMPORTS[module] = [line for _num, line in scrape_imports('\n'.join(getsource(module)))]
+	return MODIMPORTS[module]
 
 
 def getsource(item):
@@ -50,8 +68,9 @@ class GetVars(ast.NodeVisitor):
 
 	def __init__(self):
 		self.lineno = []
+		self.expr = ''
 
-	def visit_Name(self, node):
+	def visit_Name(self, node):			#pylint: disable=C0103
 		if isinstance(node.ctx, ast.Store):
 			if node.id == self.expr:
 				self.lineno.append(node.lineno)
@@ -73,6 +92,7 @@ def get_line(module, expr):
 		if line and not line.startswith((' ', '\t')):
 			# print(repr(line))
 			return line
+	return None
 
 
 def get_words(code):
@@ -80,21 +100,6 @@ def get_words(code):
 	parse = ast.parse(code)
 	return {node.id for node in ast.walk(parse) if isinstance(node, ast.Name)}
 
-
-def load_imports(module):
-	"Given a module, get it's import lines"
-	if module in MODIMPORTS:
-		return MODIMPORTS[module]
-	out = []
-	for line in getsource(module):
-		if re.match('[^\\W]*', line):
-			words = line.split()
-			if 'import' in words:
-				out.append(line)
-		if line.startswith('def'):
-			break
-	MODIMPORTS[module] = out
-	return out
 
 
 def get_class_that_defined_method(meth):
@@ -120,7 +125,8 @@ def get_class_that_defined_method(meth):
 def undefined(code):
 	"Run code through pylint and get all undefined variables"
 	# print('code=', code)
-	data = srun(PYLINT, '--from-stdin stdin --output-format=json --disable=W0312', input=code, hidewarning=True)
+	data = qrun(PYLINT, '--from-stdin stdin --output-format=json --disable=W0312'.split(),
+		        input=code, hidewarning=True)
 	for item in json_loader('\n'.join(data)):
 		idc = item['message-id']
 		msg = item['message']
@@ -129,8 +135,14 @@ def undefined(code):
 			yield re.sub('Undefined variable ', '', msg).strip("'")
 
 
-def process(func, functions, caller=None, level=0):
-	print = partial(tab_printer, level=level)
+def process(func, functions, caller=None, level=0, max_level=9):
+	'''
+	Process a function
+	level = current recurrsion level
+	max_level = Max amount of recursion to allow, 0 = unlimited
+	'''
+
+	print = partial(tab_printer, level=level)		#pylint: disable=W0622
 
 	if level:
 		print('\n\n')
@@ -190,7 +202,7 @@ def process(func, functions, caller=None, level=0):
 		if word in mod_vars.keys():
 			subfunc = mod_vars[word]
 			if subfunc != func:
-				if MAX_LEVEL and level + 1 < MAX_LEVEL:
+				if max_level and level + 1 < max_level:
 					process(subfunc, functions, caller=mod, level=level + 1)
 
 	# Look for words imported by module
@@ -215,67 +227,29 @@ def get_func_name(func):
 			name = str(func)
 	return name
 
-################################################################################
-# Main
 
-def get_output_name():
-	return shared.OUTPUT_NAME.rstrip('.py')
-
-
-def get_code_words(filename):
+def get_code_words(filename, members, common_imports):
 	print("\n\nProcessing:", filename)
-	functions = odict()     # Functions and code found in MYMOD
-
-	with open(filename) as f:
-		source = f.read()
-
-	# Scrape imports from source:
-	source_imports = set()
-	mod_name = os.path.basename(MYMOD.__file__).rstrip('.py')
-	common_imports = []
-	out = []
-	deleted_lines = 0
-	source = source.splitlines()
-
-	for num, line in enumerate(source):
-		if line.startswith('import ') or (line.startswith('from') and ' import ' in line):
-			if line.startswith('from ' + mod_name + ' import') or \
-			line.startswith('from ' + get_output_name() + ' import'):
-				print(line)
-				common_imports += re.sub('.*import ', '', line).split()
-				deleted_lines += 1
-				continue
-			start = line.split().index('import')
-			for i in line.split()[start + 1:]:
-				if i != '*':
-					source_imports.add(i)
-		if line.startswith('def'):
-			_func_start = num - deleted_lines
-			break
-		out.append(line)
-	#source = out + source[num:]
+	functions = odict()     # Functions and code found in mymod
 
 
-	if not common_imports:
-		warn("Could not find any common imports in", filename, "for module name:", mod_name)
 
 	# Read through every line in the source code file, branching into the imports for more functions
 	if '*' in common_imports:
-		# gen = iter([node.id for node in ast.walk(ast.parse('\n'.join(source))) if isinstance(node, ast.Name)])
-		gen = iter(star_namer.scrape_wildcard(filename, MM).keys())
+		gen = iter(star_namer.scrape_wildcard(filename, members).keys())
 	else:
 		gen = iter(common_imports)
 
 	for word in gen:
 		word = word.strip(',')
-		if word in MM.keys():
-			func = MM[word]
+		if word in members.keys():
+			func = members[word]
 
 			# For non functions, do an import
 			if not callable(func):
 				if isinstance(func, types.ModuleType):
 					print("Skipping root module:", func.__name__)
-				elif word in MM.keys() and not word.startswith('__'):
+				elif word in members.keys() and not word.startswith('__'):
 					print("Found root Variable:", word)
 					if not hasattr(func, '__dict__'):
 						code = func
@@ -293,60 +267,102 @@ def get_code_words(filename):
 				process(func, functions, level=0)
 	return functions
 
+################################################################################
+# Main
+
 
 def main():
+	args = [\
+		["output", "output_name", str, shared.OUTPUT_NAME],
+		"Output file name",
+		["onefile", "", bool],
+		"Combine script and functions in one file",
+		]
+	positionals = [\
+		["mymod"],
+		"Module name to copy function from",
+		["scripts", '', list],
+		"Python scripts to scan through",
+		]
 
-	filenames = sys.argv[2:]
+	args = easy_parse(args, positionals)
+	mymod = star_namer.load_mod(args.mymod)
+	mod_name = os.path.basename(mymod.__file__).rstrip('.py')
+	members = dict(inspect.getmembers(mymod))
+	onefile = args.onefile
+	output_name = args.output_name.rstrip('.py')
+	filenames = args.scripts
+
 	if not filenames:
 		error("You must specify at least one filename")
 	for name in filenames:
 		if not os.path.exists(name):
 			error(name, "does not exist")
 
-	if ONEFILE:
+	if onefile:
+		if len(filenames) != 1:
+			error("--onefile mode can only be used with a single file")
 		filename = filenames[0]
-		output_name = os.path.join('/tmp/publish', os.path.basename(filename))
+		output_filename = os.path.join('/tmp/publish', os.path.basename(filename))
 	else:
-		output_name = os.path.join('/tmp/publish', get_output_name()+'.py')
+		output_filename = os.path.join('/tmp/publish', output_name+'.py')
 	mkdir('/tmp/publish')
 
 	print('Mod Functions:')
-	auto_cols([(key, str(val).replace('\n', ' ')) for key, val in sorted(MM.items())], crop=[0, 200])
+	auto_cols([(key, str(val).replace('\n', ' ')) for key, val in sorted(members.items())], crop=[0, 200])
 	print("\n")
 
+	#Generate dict of required functions and their code
 	functions = odict()         # Dict of function names to code
 	file_functions = dict()     # Dict filenames to function dicts
+	file_imports = dict()			# Dict of filenames to import lists
 	for filename in filenames:
 		dirname = os.path.dirname(filename)
-		if samepath(filename, dirname, output_name):
+		if samepath(filename, dirname, output_filename):
 			error("Cannot overwrite self!")
-		sub = get_code_words(filename)
 
-		file_functions[filename] = sub
-		for func in sub:
-			if func not in functions:
-				functions[func] = sub[func]
+		#source, common_imports, func_start = scrape_imports(filename, output_name, mymod)
+		line_nums = set()
+		imports = []
+		with open(filename) as f:
+			source = f.read()
+			for num, line in scrape_imports(source):
+				if mod_name in line:
+					line_nums.add(num)
+					imports.append(re.sub('.*import ', '', line))
+		if not imports:
+			warn("Could not find any common imports in", filename, "for module name:", mod_name)
+		else:
+			file_imports[filename] = imports
+			sub = get_code_words(filename, members, [re.sub(' as .*$', '', word) for word in imports])
+			file_functions[filename] = sub
+			for func in sub:
+				if func not in functions:
+					functions[func] = sub[func]
 
-	print('\n' * 5)
-	print("Done. Outputting to file:", output_name)
-	print('#' * 80, '\n')
 
 	# Write code to output
+	print('\n' * 5)
+	print("Done. Outputting to file:", output_filename)
+	print('#' * 80, '\n')
 	output = []
+
 
 	def owl(*args):
 		"Output write lines"
 		output.append(' '.join(args))
 
+
 	# Header
-	if not ONEFILE:
+	if not onefile:
 		owl("#!/usr/bin/python3")
 		owl(shared.HEADER.strip())
-	if ONEFILE:
+	if onefile:
 		owl(shared.HEADER.replace('file', 'section').strip())
 
+
 	# Write import lines to top of the file
-	print("Imports:", *MYIMPORTS.items(), sep='\n')
+	# print("Imports:", *MYIMPORTS.items(), sep='\n')
 	owl('')
 	func_names = [get_func_name(func) for func in functions]
 	for line in sorted(MYIMPORTS.values(), key=len):
@@ -358,43 +374,44 @@ def main():
 	if MYIMPORTS:
 		owl("\n")
 
+
 	# Functions
 	for func, code in reversed(functions.items()):
 		owl('\n'.join(code))
 		owl('\n')
 
+
 	# Put it all together and output
-	'''
-	if len(output) <= 2:
-		output = source
-	else:
-		# output = source[:func_start] + ['#'*80] + output + ['#'*80,'',''] + source[func_start:]
-	'''
+	if onefile:
+		ie = max(line_nums)
+		source = source.splitlines()
+		for num in line_nums:
+			source.pop(num)
+		output = source[:ie] + ['#'*80] + output + ['#'*80, '', ''] + source[ie:]
 	output.append("\n'''\n" + shared.FOOTER.strip())
 	output.append(time.strftime('%Y-%m-%d', time.localtime()))
 	output.append("'''")
-
-	with open(output_name, 'w') as out:
+	with open(output_filename, 'w') as out:
 		for line in output:
 			out.write(line + '\n')
+
 
 	# List imports for each file for copy paste
 	# https://www.python.org/dev/peps/pep-0008/#imports
 	print('\n')
-	for filename, sub in file_functions.items():
-		if len(filenames) > 1:
-			print(filename, "functions to be imported:")
-		print("\nimport", get_output_name(), "as common")
-		words = [get_func_name(func) for func in reversed(sub.keys())]
-		for line in indenter(', '.join(words), header='from ' + get_output_name() + ' import ', wrap=80):
+	for filename, words in file_imports.items():
+		print(filename, "functions to be imported:", '\n')
+		for line in indenter(', '.join(words), header='from ' + output_name + ' import ', wrap=80):
 			print(line.rstrip(','))
 		print('\n')
 
+
 	# Finished
-	print(rfs(os.path.getsize(output_name)), 'of code saved to', output_name)
-	srun("chmod +x " + output_name)
+	print(rfs(os.path.getsize(output_filename)), 'of code saved to', output_filename)
+	qrun('chmod', '+x', output_filename)
 	print("Copy to script directory with:")
-	print('cp', output_name, os.path.join(os.path.dirname(os.path.realpath(filename)), get_output_name()+'.py'))
+	print('cp', output_filename,
+		  os.path.join(os.path.dirname(os.path.realpath(filename)), os.path.basename(output_filename)))
 
 
 if __name__ == "__main__":

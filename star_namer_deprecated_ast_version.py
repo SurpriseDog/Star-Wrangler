@@ -1,6 +1,6 @@
-'''Old version called list.used.functions.py that used ast to parse:
-
 #!/usr/bin/python3
+# Old version that used ast to parse:
+
 # Usage:  ./list.used.functions.py <main python file> <imported module name>
 # List functions used by a module
 # Use this to replace those forbidden star imports: "from mymodule import * ...
