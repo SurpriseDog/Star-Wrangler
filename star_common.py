@@ -308,7 +308,7 @@ class ArgMaster():
 	def update(self, args, title=None, sortme=None, **kargs):
 		group = self.parser.add_argument_group(title)
 		args = update_parser(args, group, **kargs)
-		self.groups.append(DotDict(locals()))
+		self.groups.append(DotDict(args=args, title=title, sortme=sortme))
 
 	def parse(self, args=None, am_help=True):
 		if not args:
@@ -530,9 +530,6 @@ def auto_columns(array, space=4, manual=None, printme=True, wrap=0, crop=None):
 	return col_width
 
 
-auto_cols = auto_columns    # pylint: disable=C0103
-
-
 def sig(num, digits=3):
 	"Return number formatted for significant digits"
 	if num == 0:
@@ -648,9 +645,6 @@ class Eprinter:
 		else:
 			print(msg, file=sys.stderr, **kargs)
 		return len(msg)
-
-
-eprint = Eprinter(verbose=1).eprint     # pylint: disable=C0103
 
 
 def error(*args, header='\nError:', **kargs):
@@ -791,6 +785,12 @@ def json_loader(data):
 		print('Json Data:', repr(data))
 		raise ValueError("Json error", err.__class__.__name__)
 	return tree
+
+
+eprint = Eprinter(verbose=1).eprint     # pylint: disable=C0103
+
+
+auto_cols = auto_columns    # pylint: disable=C0103
 
 
 

@@ -135,6 +135,9 @@ def undefined(code):
 			yield re.sub('Undefined variable ', '', msg).strip("'")
 
 
+
+
+
 def process(func, functions, caller=None, level=0, max_level=9):
 	'''
 	Process a function
@@ -143,6 +146,18 @@ def process(func, functions, caller=None, level=0, max_level=9):
 	'''
 
 	print = partial(tab_printer, level=level)		#pylint: disable=W0622
+
+	def alias_finder(name, module):
+		'''Find a line of code that is the aliases a function,
+		Ex: auto_cols = autocolumns
+		Global declarations only!
+		'''
+		print("searching for:", name, 'in', module)
+		for line in getsource(module):
+			if line.startswith(name):
+				print('alias found:', line)
+				functions[name] = [line]
+				functions.move_to_end(name, last=False)
 
 	if level:
 		print('\n\n')
@@ -165,28 +180,26 @@ def process(func, functions, caller=None, level=0, max_level=9):
 	# If it's a method of a class, get the whole class
 	if inspect.ismethod(func):
 		parent = get_class_that_defined_method(func)
-		if parent not in functions:
+		if get_func_name(parent) not in functions:
 			print("Processing method", func, "of", parent)
 			print(func.__name__, '=', func)
 
 			if hasattr(func, '__self__'):
 				print("Detected", func.__name__, "is bound method")
-				for line in getsource(mod):
-					if line.startswith(func.__name__):
-						print(line)
-						functions[func] = [line]
+				alias_finder(func.__name__, mod)
 			func = parent
 		else:
 			print("Already processed:", parent)
 			return
 
 	# Get code
-	if func not in functions:
+	name = get_func_name(func)
+	if name not in functions:
 		code = getsource(func)
-		functions[func] = code
+		functions[name] = code
 		print("Loaded:", plural(len(code), 'line'), 'of code')
 	else:
-		code = functions[func]
+		code = functions[name]
 
 	# Get words from within function
 	if func in FUNC_UNDEF:
@@ -201,9 +214,12 @@ def process(func, functions, caller=None, level=0, max_level=9):
 	for word in words:
 		if word in mod_vars.keys():
 			subfunc = mod_vars[word]
+			if word != subfunc.__name__:
+				alias_finder(word, inspect.getmodule(subfunc))
 			if subfunc != func:
-				if max_level and level + 1 < max_level:
-					process(subfunc, functions, caller=mod, level=level + 1)
+				if max_level and level + 1 > max_level:
+					continue
+				process(subfunc, functions, caller=mod, level=level + 1)
 
 	# Look for words imported by module
 	for word in words:
@@ -364,7 +380,8 @@ def main():
 	# Write import lines to top of the file
 	# print("Imports:", *MYIMPORTS.items(), sep='\n')
 	owl('')
-	func_names = [get_func_name(func) for func in functions]
+	#func_names = [get_func_name(func) for func in functions]
+	func_names = functions.keys()
 	for line in sorted(MYIMPORTS.values(), key=len):
 		words = re.sub('.* import ', '', line).split()
 		if not any([word in func_names for word in words]):
