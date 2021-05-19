@@ -319,10 +319,10 @@ def main():
 		if len(filenames) != 1:
 			error("--onefile mode can only be used with a single file")
 		filename = filenames[0]
-		output_filename = os.path.join('/tmp/publish', os.path.basename(filename))
+		output_filename = os.path.join('/tmp/Star_Wrangler', os.path.basename(filename))
 	else:
-		output_filename = os.path.join('/tmp/publish', output_name+'.py')
-	mkdir('/tmp/publish')
+		output_filename = os.path.join('/tmp/Star_Wrangler', output_name+'.py')
+	mkdir('/tmp/Star_Wrangler')
 
 	print('Mod Functions:')
 	auto_cols([(key, str(val).replace('\n', ' ')) for key, val in sorted(members.items())], crop=[0, 200])
