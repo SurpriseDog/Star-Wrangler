@@ -3,14 +3,16 @@
 # To see how this file was created visit: https://github.com/SurpriseDog/Star-Wrangler
 # Written by SurpriseDog at: https://github.com/SurpriseDog
 
-import os
 import re
+import os
 import sys
-import time
 import json
+import math
+import time
 import argparse
 import subprocess
 from shutil import get_terminal_size
+from printing import auto_cols
 
 
 def search_list(expr, the_list, getfirst=False, func='match', ignorecase=True, searcher=None):
@@ -53,6 +55,80 @@ def search_list(expr, the_list, getfirst=False, func='match', ignorecase=True, s
 	return output
 
 
+def flatten(tree):
+	"Flatten a nested list, tuple or dict of any depth into a flat list"
+	# For big data sets use this: https://stackoverflow.com/a/45323085/11343425
+	out = []
+	if isinstance(tree, dict):
+		for key, val in tree.items():
+			if type(val) in (list, tuple, dict):
+				out += flatten(val)
+			else:
+				out.append({key: val})
+
+	else:
+		for item in tree:
+			if type(item) in (list, tuple, dict):
+				out += flatten(item)
+			else:
+				out.append(item)
+	return out
+
+
+def quickrun(*cmd, check=False, encoding='utf-8', errors='replace', mode='w', input=None,	# pylint: disable=W0622
+			 verbose=0, testing=False, ofile=None, trifecta=False, hidewarning=False, **kargs):
+	'''Run a command, list of commands as arguments or any combination therof and return
+	the output is a list of decoded lines.
+	check    = if the process exits with a non-zero exit code then quit
+	testing  = Print command and don't do anything.
+	ofile    = output file
+	mode     = output file write mode
+	trifecta = return (returncode, stdout, stderr)
+	input	 = stdinput (auto converted to bytes)
+	'''
+	cmd = list(map(str, flatten(cmd)))
+	if len(cmd) == 1:
+		cmd = cmd[0]
+
+	if testing:
+		print("Not running command:", cmd)
+		return []
+
+	if verbose:
+		print("Running command:", cmd)
+		print("               =", ' '.join(cmd))
+
+	if ofile:
+		output = open(ofile, mode=mode)
+	else:
+		output = subprocess.PIPE
+
+	if input:
+		if type(input) != bytes:
+			input = input.encode()
+
+	#Run the command and get return value
+	ret = subprocess.run(cmd, check=check, stdout=output, stderr=output, input=input, **kargs)
+	code = ret.returncode
+	stdout = ret.stdout.decode(encoding=encoding, errors=errors).splitlines() if ret.stdout else []
+	stderr = ret.stderr.decode(encoding=encoding, errors=errors).splitlines() if ret.stderr else []
+
+	if ofile:
+		output.close()
+		return []
+
+	if trifecta:
+		return code, stdout, stderr
+
+	if code and not hidewarning:
+		warn("Process returned code:", code)
+
+	for line in stderr:
+		print(line)
+
+	return stdout
+
+
 def argfixer():
 	'''Fix up args for argparse. Lowers case and turns -args into --args'''
 	out = []
@@ -66,69 +142,39 @@ def argfixer():
 	return out[1:]
 
 
-def help_parser(parser, show_type=True, sortme=True, wrap=100, tab='  '):
-	'''Print a custom help message from the ArgumentParser class
-		show_type = append the variable type expected after each optional argument.
-		--arg <int> <int> will expect 2 integers after the arg
-		wrap = word wrap instead of using full terminal. 0 = disable
-		sort = sort alphabetically. Positional variables are never sorted.
-		To sort individual groups, add a special key: group.sortme = True
-
-		Warning: If your variable is not in a group, it will not be shown!
+class DotDict(dict):
+	'''Example:
+	m = dotdict({'first_name': 'Eduardo'}, last_name='Pool', age=24, sports=['Soccer'])
 	'''
-	def alias(action):
-		"Return string representing the variable for the leftmost column"
-		if action.option_strings:
-			text = ', '.join(action.option_strings)
-		else:
-			text = action.dest
-		if show_type:
-			if not action.option_strings:
-				text = '<' + text + '>'
-			if action.type and action.type != bool:
-				if action.type == list:
-					typ = '...'
-				else:
-					typ = '<' + str(action.type).replace('class ', '')[2:-2] + '>'
+	# Source: https://stackoverflow.com/questions/2352181/how-to-use-a-dot-to-access-members-of-dictionary
 
-				if isinstance(action.nargs, int):
-					count = action.nargs
-				else:
-					count = 1
-				text += ' ' + ' '.join([typ] * count)
-		return text
+	def __init__(self, *args, **kwargs):
+		super(DotDict, self).__init__(*args, **kwargs)
+		for arg in args:
+			if isinstance(arg, dict):
+				for k, v in arg.items():
+					self[k] = v
 
-	final = []
-	width = 0
-	for group in parser._action_groups:
-		out = []
-		for action in group._group_actions:
-			if action.help and action.help != '==SUPPRESS==':
-				help = list(action.help)
-				help[0] = help[0].title()
-				variable = alias(action)
-				out.append([variable, ''.join(help)])
-				if len(variable) > width:
-					width = len(variable)
-			if sortme or group.__dict__.get('sortme', False):
-				# Sort the group while mainting the order of positional arguments at the top
-				positionals = [out.pop(line) for line in range(len(out) - 1, -1, -1) if out[line][0].startswith('<')]
-				out.sort()
-				out = list(reversed(positionals)) + out
-		final.append(out)
+		if kwargs:
+			for k, v in kwargs.items():
+				self[k] = v
 
-	for group in parser._action_groups:
-		out = final.pop(0)
-		if out:
-			for line in range(len(out)):
-				out[line][0] = tab + out[line][0].ljust(width)
+	def __getattr__(self, attr):
+		return self.get(attr)
 
-			print()
-			if group.title:
-				print(group.title + ':')
-			if group.description:
-				auto_cols([[tab + group.description]])
-			auto_cols(out, wrap=wrap)
+	def __setattr__(self, key, value):
+		self.__setitem__(key, value)
+
+	def __setitem__(self, key, value):
+		super(DotDict, self).__setitem__(key, value)
+		self.__dict__.update({key: value})
+
+	def __delattr__(self, item):
+		self.__delitem__(item)
+
+	def __delitem__(self, key):
+		super(DotDict, self).__delitem__(key)
+		del self.__dict__[key]
 
 
 def list_get(lis, index, default=''):
@@ -146,7 +192,7 @@ def undent(text, tab=''):
 	return '\n'.join([tab + line.lstrip() for line in text.splitlines()])
 
 
-def update_parser(lines, parser=None, suppress=False, positionals=False):
+def update_parser(lines, parser=None, hidden=False, positionals=False):
 	'''
 	This is a more intuitive method for adding optional arguments.
 	For positional arguments, use the standard syntax.
@@ -176,44 +222,48 @@ def update_parser(lines, parser=None, suppress=False, positionals=False):
 	if not isinstance(lines[-1], str):
 		lines.append("")
 
-	alias = None		#
-	varname = None		# Variable Name
-	default = None		# Default value
+	alias = None        #
+	varname = None      # Variable Name
+	default = None      # Default value
+	out = []
 
-	for args in lines:
+	def update():
+		nonlocal alias
+		"# Update argument to parser:"
+		if parser:
+			if positionals:
+				parser.add_argument(alias, default=default, nargs=nargs, help=msg)
+			else:
+				alias = '--' + alias
+				if typ == bool:
+					parser.add_argument(alias, dest=varname, default=default, action=action, help=msg)
+				else:
+					parser.add_argument(alias, dest=varname, default=default, type=typ,
+										nargs=nargs, help=msg, metavar='')
+			out.append(dict(alias=alias, dest=varname, typ=typ, default=default, msg=msg))
+
+	for index, args in enumerate(lines):
 
 		# Add help if available
 		if isinstance(args, str):
-			help = undent(args.strip())
-			if help and not help.endswith('.'):
-				last = help.split()[-1]
+			msg = undent(args.strip())
+			if msg and not msg.endswith('.'):
+				last = msg.split()[-1]
 				if last[-1].isalnum() and not last.startswith('-'):
-					help = help + '.'
+					msg = msg + '.'
 			if default:
-				help += "  Default: " + str(default)
+				msg += "  Default: " + str(default)
 
-		if suppress:
+		if hidden:
 			# Hide the help text:
-			help = argparse.SUPPRESS
+			msg = argparse.SUPPRESS
 
 		# If on a new tuple line, add_argument
 		if alias or varname:
-			if parser:
-				# Update argument to parser:
-
-				if positionals:
-					parser.add_argument(alias, default=default, nargs=nargs, help=help)
-				else:
-					if typ == bool:
-						parser.add_argument('--' + alias, dest=varname, default=default, action=action, help=help)
-					else:
-						parser.add_argument('--' + alias, dest=varname, default=default, type=typ,
-											nargs=nargs, help=help, metavar='')
-
-			# out.append((alias, varname, typ, default, help))
+			update()
 			alias = None
 			varname = None
-			help = ""
+			msg = ""
 
 		# Continue if not on a new tuple line
 		if isinstance(args, str):
@@ -227,7 +277,6 @@ def update_parser(lines, parser=None, suppress=False, positionals=False):
 			varname = alias
 
 		default = list_get(args, 3, '')
-
 		typ = list_get(args, 2, type(default))
 		if typ == list:
 			nargs = '*'
@@ -243,40 +292,114 @@ def update_parser(lines, parser=None, suppress=False, positionals=False):
 			else:
 				action = 'store_true'
 				default = False
+		if index == len(lines) - 1:
+			update()
+
+	return out
 
 
-def easy_parse(args, positionals=None, allow_abrev=True, title="Optional Arguments", **kargs):
-	''''Add a basic list of optional arguments and simple positional arguments
-	use a tuple of (arg, help) to include a help
-	or simply arg1, arg2
-	'''
+class ArgMaster():
+	"A wrapper class for ArgumentParser with easy to use arguments. See update_parser() for details."
 
-	parser = argparse.ArgumentParser(allow_abbrev=allow_abrev, add_help=False, **kargs)
+	def __init__(self, sortme=True, allow_abbrev=True, usage=None):
+		self.sortme = sortme            # Sort all non positionals args
+		self.groups = []                # List of all groups
+		self.parser = argparse.ArgumentParser(allow_abbrev=allow_abbrev, add_help=False, usage=usage)
 
+	def update(self, args, title=None, sortme=None, **kargs):
+		group = self.parser.add_argument_group(title)
+		args = update_parser(args, group, **kargs)
+		self.groups.append(DotDict(locals()))
 
-	if positionals:
-		group_pos = parser.add_argument_group("Positional Arguments")
-		update_parser(positionals, group_pos, positionals=True)
+	def parse(self, args=None, am_help=True):
+		if not args:
+			args = sys.argv
 
-	group_basic = parser.add_argument_group(title, '')
-	update_parser(args, group_basic)
+		if not am_help:
+			self.parser.add_help = True
+			return self.parser.parse_args(args)
 
-	#Match help
-	for arg in sys.argv:
-		if re.match('--*h$|--*help$', arg):
-			help_parser(parser)
+		# Match help
+		for arg in args:
+			if re.match('--*h$|--*help$', arg):
+				self.print_help()
+				sys.exit(0)
+		try:
+			return self.parser.parse_args(args)
+		except SystemExit:
+			self.print_help()
 			sys.exit(0)
 
+	def print_help(self, show_type=True, wrap=100, tab='  '):
+		'''Print a custom help message from the ArgumentParser class
+		show_type = append the variable type expected after each optional argument.
+		--arg <int> <int> will expect 2 integers after the arg
+		wrap = word wrap instead of using full terminal. 0 = disable
+		sort = sort alphabetically. Positional variables are never sorted.
+		To sort individual groups, add a special key: group.sortme = True
 
-	try:
-		args = parser.parse_args(argfixer())
-	except SystemExit:
-		help_parser(parser)
-		sys.exit(1)
-	return args
+		Warning: If your variable is not in a group, it will not be shown!'''
+
+		final = []
+		width = 0                       # Max width of the variables column
+		for group in self.groups:
+			out = []
+			for args in group.args:
+				args = DotDict(args)
+				msg = args.msg
+				if msg == argparse.SUPPRESS:
+					continue
+				alias = args.alias
+				if show_type:
+					if args.typ and args.typ != bool:
+						if args.typ == list:
+							typ = '...'
+						else:
+							typ = '<' + str(args.typ).replace('class ', '')[2:-2] + '>'
+					alias += ' ' + typ
+				if len(alias) > width:
+					width = len(alias)
+				out.append([alias, msg])
+
+			if group.sortme is not None:
+				sortme = group.sortme
+			else:
+				sortme = self.sortme
+			if sortme:
+				# Sort the group while mainting the order of positional arguments at the top
+				positionals = [out.pop(line) for line in range(len(out) - 1, -1, -1) if out[line][0].startswith('<')]
+				out.sort()
+				out = list(reversed(positionals)) + out
+			final.append(out)
+
+		for index, out in enumerate(final):
+			group = self.groups[index]
+			if out:
+				for line, _ in enumerate(out):
+					out[line][0] = tab + out[line][0].ljust(width)
+				print()
+				if group.title:
+					print(group.title.rstrip(':') + ':')
+				if group.description:
+					auto_cols([[tab + group.description]])
+				auto_cols(out, wrap=wrap)
 
 
-def print_columns(args, col_width=20, columns=None, just='left', space=0, wrap=True):	# pylint: disable=W0621
+def easy_parse(optionals_list, pos_list=None, title="Optional Arguments", **kargs):
+	'''Simpler way to pass arguments to ArgMaster class'''
+
+	am = ArgMaster(**kargs)
+	am.update(optionals_list, title)
+	if pos_list:
+		am.update(pos_list, positionals=True)
+	return am.parse(argfixer())
+
+
+def warn(*args, header="\n\nWarning:", delay=1 / 64):
+	time.sleep(eprint(*args, header=header, v=2) * delay)
+
+
+def print_columns(args, col_width=20, columns=None, just='left', space=0, wrap=True):
 	'''Print columns of col_width size.
 	columns = manual list of column widths
 	just = justification: left, right or center'''
@@ -322,7 +445,7 @@ def print_columns(args, col_width=20, columns=None, just='left', space=0, wrap=T
 		print_columns(line, col_width, columns, just, space, wrap=False)
 
 
-def auto_columns(array, space=4, manual=None, printme=True, wrap=0, crop=None):		# pylint: disable=W0621
+def auto_columns(array, space=4, manual=None, printme=True, wrap=0, crop=None):
 	'''Automatically adjust column size
 	Takes in a 2d array and prints it neatly
 	space = spaces between columns
@@ -339,10 +462,10 @@ def auto_columns(array, space=4, manual=None, printme=True, wrap=0, crop=None):	
 		out = []
 		for row in array:
 			row = list(row)
-			for index in range(len(row)):
+			for index, _ in enumerate(row):
 				line = str(row[index])
 				cut = crop[index]
-				if cut > 3 and len(line) > cut:
+				if len(line) > cut > 3:
 					row[index] = line[:cut-3]+'...'
 			out.append(row)
 		array = out
@@ -352,7 +475,7 @@ def auto_columns(array, space=4, manual=None, printme=True, wrap=0, crop=None):	
 	col_width = {}
 	for row in array:
 		row = list(map(str, row))
-		for col in range(len(row)):
+		for col, _ in enumerate(row):
 			length = len(row[col])
 			if length > col_width.get(col, 0):
 				col_width[col] = length
@@ -376,7 +499,7 @@ def auto_columns(array, space=4, manual=None, printme=True, wrap=0, crop=None):	
 	def fill_remainder():
 		"After operation to reduce column sizes, use up any remaining space"
 		remain = max_width - sum(col_width)
-		for x in range(len(col_width)):
+		for x, _ in enumerate(col_width):
 			if remain:
 				col_width[x] += 1
 				remain -= 1
@@ -409,15 +532,19 @@ def auto_columns(array, space=4, manual=None, printme=True, wrap=0, crop=None):	
 
 
 def sig(num, digits=3):
-	"Return number formatted for significant digits (formerly get_significant)"
-	ret = ("{0:." + str(digits) + "g}").format(num)
-	if 'e' in ret:
-		if abs(num) >= 1:
-			return str(int(num))
-		else:
-			return str(num)
+	"Return number formatted for significant digits"
+	if num == 0:
+		return '0'
+	negative = '-' if num < 0 else ''
+	num = abs(float(num))
+	power = math.log(num, 10)
+	if num < 1:
+		num = int(10**(-int(power) + digits) * num)
+		return negative + '0.' + '0' * -int(power) + str(int(num)).rstrip('0')
+	elif power < digits - 1:
+		return negative + ('{0:.' + str(digits) + 'g}').format(num)
 	else:
-		return ret
+		return negative + str(int(num))
 
 
 def rfs(num, mult=1000, digits=3, order=' KMGTPEZY', suffix='B'):
@@ -430,6 +557,7 @@ def rfs(num, mult=1000, digits=3, order=' KMGTPEZY', suffix='B'):
 		magnitude = mult**x
 		if abs(num) >= magnitude:
 			return sig(num / magnitude, digits) + ' ' + (order[x] + suffix).rstrip()
+	return str(num) + suffix		#Never called, but needed for pylint
 
 
 def samepath(*paths):
@@ -440,6 +568,87 @@ def samepath(*paths):
 def mkdir(target, exist_ok=True, **kargs):
 	"Make a directory without fuss"
 	os.makedirs(target, exist_ok=exist_ok, **kargs)
+
+
+class Eprinter:
+	'''Drop in replace to print errors if verbose level higher than setup level
+	To replace every print statement type: from common import eprint as print
+
+	eprint(v=-1)    # Normally hidden messages
+	eprint(v=0)     # Default level
+	eprint(v=1)     # Priority messages
+	eprint(v=2)     # Warnings
+	eprint(v=3)     # Errors
+	'''
+
+	# Setup: eprint = Eprinter(<verbosity level>).eprint
+	# Simple setup: from common import eprint
+	# Usage: eprint(messages, v=1)
+
+	# Don't forget they must end in 'm'
+	BOLD = '\033[1m'
+	WARNING = '\x1b[1;33;40m'
+	FAIL = '\x1b[0;31;40m'
+	END = '\x1b[0m'
+
+	def __init__(self, verbose=0):
+		self.level = verbose
+		self.history = []
+
+		#If string starts with '\n', look at history to make sure previous newlines don't exist
+		self.autonewlines = True
+
+	def newlines(self, num=1):
+		"Print the required number of newlines after checking history to make sure they exist."
+		lines = sum([1 for line in self.history[-num:] if not line.strip()])
+		num -= lines
+		if num:
+			print('\n' * (num), end='')
+		return num
+
+
+	def eprint(self, *args, v=0, color=None, header=None, **kargs):
+		'''Print to stderr
+		Custom color example: color='1;33;40'
+		More colors: https://stackoverflow.com/a/21786287/11343425
+		'''
+		verbose = v
+		# Will print if verbose >= level
+		if verbose < self.level:
+			return 0
+
+		if not color:
+			if v == 2 and not color:
+				color = f"{self.WARNING}"
+			if v >= 3 and not color:
+				color = f"{self.FAIL}" + f"{self.BOLD}"
+		else:
+			color = '\x1b[' + color + 'm'
+
+		msg = ' '.join(map(str, args))
+		if self.autonewlines:
+			match = re.match('^\n*', msg)
+			if match:
+				num = self.newlines(match.span()[1])
+				if num:
+					#print('created', num, 'newlines', repr(msg[:64]))
+					msg = msg.lstrip('\n')
+
+
+		self.history += msg.splitlines()
+		if len(self.history) > 64:
+			self.history = self.history[64:]
+
+		if header:
+			msg = header + ' ' + msg
+		if color:
+			print(color + msg + f"{self.END}", file=sys.stderr, **kargs)
+		else:
+			print(msg, file=sys.stderr, **kargs)
+		return len(msg)
+
+
+eprint = Eprinter(verbose=1).eprint     # pylint: disable=C0103
 
 
 def error(*args, header='\nError:', **kargs):
@@ -530,7 +739,7 @@ def plural(val, word, multiple=None):
 		return str(val) + ' ' + replacement
 
 
-def indenter(*args, header='', level=0, tab=4, wrap=0, even=False):			# pylint: disable=W0621
+def indenter(*args, header='', level=0, tab=4, wrap=0, even=False):
 	"Break up text into tabbed lines. Wrap at max characters. 0 = Don't wrap"
 
 	if type(tab) == int:
@@ -539,7 +748,7 @@ def indenter(*args, header='', level=0, tab=4, wrap=0, even=False):			# pylint: 
 	words = (' '.join(map(str, args))).split(' ')
 
 	lc = float('inf')       # line count
-	for wrap in range(wrap, -1, -1):
+	for cut in range(wrap, -1, -1):
 		out = []
 		line = ''
 		count = 0
@@ -549,7 +758,7 @@ def indenter(*args, header='', level=0, tab=4, wrap=0, even=False):			# pylint: 
 			else:
 				new = header + word
 			count += 1
-			if wrap and len(new.replace('\t', ' ' * 4)) > wrap:
+			if cut and len(new.replace('\t', ' ' * 4)) > cut:
 				out.append(line)
 				line = header + word
 			else:
@@ -580,139 +789,6 @@ def json_loader(data):
 		print('Json Data:', repr(data))
 		raise ValueError("Json error", err.__class__.__name__)
 	return tree
-
-
-class Eprinter:
-	'''Drop in replace to print errors if verbose level higher than setup level
-	To replace every print statement type: from common import eprint as print
-
-	eprint(v=-1)    # Normally hidden messages
-	eprint(v=0)     # Default level
-	eprint(v=1)     # Priority messages
-	eprint(v=2)     # Warnings
-	eprint(v=3)     # Errors
-	'''
-
-	# Setup: eprint = Eprinter(<verbosity level>).eprint
-	# Simple setup: from common import eprint
-	# Usage: eprint(messages, v=1)
-
-	# Don't forget they must end in 'm'
-	BOLD = '\033[1m'
-	WARNING = '\x1b[1;33;40m'
-	FAIL = '\x1b[0;31;40m'
-	END = '\x1b[0m'
-
-	def __init__(self, verbose=0):
-		self.level = verbose
-
-	def eprint(self, *args, v=0, color=None, header=None, **kargs):
-		'''Print to stderr
-		Custom color example: color='1;33;40'
-		More colors: https://stackoverflow.com/a/21786287/11343425
-		'''
-		verbose = v
-		# Will print if verbose >= level
-		if verbose < self.level:
-			return 0
-
-		if not color:
-			if v == 2 and not color:
-				color = f"{self.WARNING}"
-			if v >= 3 and not color:
-				color = f"{self.FAIL}" + f"{self.BOLD}"
-		else:
-			color = '\x1b[' + color + 'm'
-
-		msg = ' '.join(map(str, args))
-		if header:
-			msg = header + ' ' + msg
-		if color:
-			print(color + msg + f"{self.END}", file=sys.stderr, **kargs)
-		else:
-			print(msg, file=sys.stderr, **kargs)
-		return len(msg)
-
-
-eprint = Eprinter(verbose=1).eprint     # pylint: disable=C0103
-
-
-def warn(*args, header="\n\nWarning:", delay=1 / 64):
-	time.sleep(eprint(*args, header=header, v=2) * delay)
-
-
-def flatten(tree):
-	"Flatten a nested list, tuple or dict of any depth into a flat list"
-	# For big data sets use this: https://stackoverflow.com/a/45323085/11343425
-	out = []
-	if isinstance(tree, dict):
-		for key, val in tree.items():
-			if type(val) in (list, tuple, dict):
-				out += flatten(val)
-			else:
-				out.append({key: val})
-
-	else:
-		for item in tree:
-			if type(item) in (list, tuple, dict):
-				out += flatten(item)
-			else:
-				out.append(item)
-	return out
-
-
-def quickrun(*cmd, check=False, encoding='utf-8', errors='replace', mode='w', input=None,	# pylint: disable=W0622
-			 verbose=0, testing=False, ofile=None, trifecta=False, hidewarning=False, **kargs):
-	'''Run a command, list of commands as arguments or any combination therof and return
-	the output is a list of decoded lines.
-	check    = if the process exits with a non-zero exit code then quit
-	testing  = Print command and don't do anything.
-	ofile    = output file
-	mode     = output file write mode
-	trifecta = return (returncode, stdout, stderr)
-	input	 = stdinput (auto converted to bytes)
-	'''
-	cmd = list(map(str, flatten(cmd)))
-	if len(cmd) == 1:
-		cmd = cmd[0]
-
-	if testing:
-		print("Not running command:", cmd)
-		return []
-
-	if verbose:
-		print("Running command:", cmd)
-		print("               =", ' '.join(cmd))
-
-	if ofile:
-		output = open(ofile, mode=mode)
-	else:
-		output = subprocess.PIPE
-
-	if input:
-		if type(input) != bytes:
-			input = input.encode()
-
-	#Run the command and get return value
-	ret = subprocess.run(cmd, check=check, stdout=output, stderr=output, input=input, **kargs)
-	code = ret.returncode
-	stdout = ret.stdout.decode(encoding=encoding, errors=errors).splitlines() if ret.stdout else []
-	stderr = ret.stderr.decode(encoding=encoding, errors=errors).splitlines() if ret.stderr else []
-
-	if ofile:
-		output.close()
-		return []
-
-	if trifecta:
-		return code, stdout, stderr
-
-	if code and not hidewarning:
-		warn("Process returned code:", code)
-
-	for line in stderr:
-		print(line)
-
-	return stdout
 
 
 
@@ -754,5 +830,5 @@ def quickrun(*cmd, check=False, encoding='utf-8', errors='replace', mode='w', in
 &&&&&%(((*.*... . .*,.   .           .*%%#(,.          .    .*,. ..,.,,**/(%#&%%
 
 Generated by https://github.com/SurpriseDog/Star-Wrangler
-2021-05-15
+2021-05-19
 '''
