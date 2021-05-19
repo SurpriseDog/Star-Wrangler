@@ -2,7 +2,6 @@
 
 PYLINT = "/usr/bin/pylint"  	# Path to pylint with at least version 2.4
 OUTPUT_NAME = "sd_common"		# Name of the file generated
-"a docstring"
 
 
 HEADER = '''

@@ -12,7 +12,6 @@ import time
 import argparse
 import subprocess
 from shutil import get_terminal_size
-from printing import auto_cols
 
 
 def search_list(expr, the_list, getfirst=False, func='match', ignorecase=True, searcher=None):
@@ -529,6 +528,9 @@ def auto_columns(array, space=4, manual=None, printme=True, wrap=0, crop=None):
 			print_columns(row, columns=col_width, space=0)
 
 	return col_width
+
+
+auto_cols = auto_columns    # pylint: disable=C0103
 
 
 def sig(num, digits=3):
