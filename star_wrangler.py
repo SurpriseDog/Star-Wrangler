@@ -5,339 +5,250 @@
 
 import os
 import re
-import ast
 import sys
 import time
-import types
+import shutil
 import inspect
-from functools import partial
 from collections import OrderedDict as odict
 
 import shared
-import star_namer
 
-from star_common import json_loader, tab_printer, plural, error, mkdir
-from star_common import samepath, indenter, rfs, auto_columns as auto_cols
-from star_common import warn, easy_parse, quickrun as qrun
+from universe import load_imports, getsource, undefined, scrape_imports, get_mod_name
+from universe import get_class_that_defined_method, get_func_name, load_mod, scrape_wildcard
+from universe import iter_nodes
 
-MYIMPORTS = odict()         # Required modules to be imported
-FUNC_UNDEF = dict()         # Dict of functions to undefined words
-MODIMPORTS = dict()         # Dict of module : import lines in module
-SRC = dict()                # Dict of modules to source code lines
+from star_common import samepath, indenter, tab_printer, auto_cols, easy_parse
+from star_common import mkdir, error, rfs, plural, warn, quickrun as qrun
 
+#Build: wrangler star_wrangler.py star_namer.py universe.py --dir . --name star_common
 
-def scrape_imports(source):
-	"Given source code, scrape it's import lines"
-	tree = ast.parse(source)
-	for node in ast.iter_child_nodes(tree):
-		if isinstance(node, (ast.Import, ast.ImportFrom)):
-			for var in node.names:
-				out = [var.name]
-				if var.asname:
-					out += ['as', var.asname]
-				if isinstance(node, ast.ImportFrom):
-					out = ['from', node.module, 'import'] + out
-				else:
-					out = ['import'] + out
-				yield node.lineno - 1, ' '.join(out)
+def get_args():
+	"Get user arguments"
 
-
-def load_imports(module):
-	"Given a module, get it's import lines"
-	if module in MODIMPORTS:
-		return MODIMPORTS[module]
-	MODIMPORTS[module] = [line for _num, line in scrape_imports('\n'.join(getsource(module)))]
-	return MODIMPORTS[module]
-
-
-def getsource(item):
-	"Retrieve the source of module or function"
-	if not any([inspect.isclass(item), inspect.ismodule(item), inspect.ismethod(item), inspect.isfunction(item)]):
-		print("Confused by item:", item)
-		print("Trying one level up:", type(item))
-		item = type(item)
-
-	if item not in SRC:
-		code = inspect.getsource(item)
-		SRC[item] = code.splitlines()
-	return SRC[item]
-
-
-class GetVars(ast.NodeVisitor):
-	"Usage: GetVars().search(ast.parse(code), 'eprint')"
-
-	def __init__(self):
-		self.lineno = []
-		self.expr = ''
-
-	def visit_Name(self, node):			#pylint: disable=C0103
-		if isinstance(node.ctx, ast.Store):
-			if node.id == self.expr:
-				self.lineno.append(node.lineno)
-
-	def search(self, node, expr):
-		self.expr = expr
-		self.visit(node)
-		return self.lineno
-
-
-def get_line(module, expr):
-	"Search module for global variable definition line"
-	print("\nSearching for:", expr, 'in', module)
-	code = '\n'.join(getsource(module))
-	numbers = GetVars().search(ast.parse(code), expr)
-	code = code.splitlines()
-	for num in numbers:
-		line = code[num - 1]
-		if line and not line.startswith((' ', '\t')):
-			# print(repr(line))
-			return line
-	return None
-
-
-def get_words(code):
-	"Read block of code and get unique functions"
-	parse = ast.parse(code)
-	return {node.id for node in ast.walk(parse) if isinstance(node, ast.Name)}
-
-
-
-def get_class_that_defined_method(meth):
-	"Credit to Yoel: https://stackoverflow.com/a/25959545/11343425"
-	if isinstance(meth, partial):
-		return get_class_that_defined_method(meth.func)
-	if inspect.ismethod(meth) or \
-	(inspect.isbuiltin(meth) and \
-	getattr(meth, '__self__', None) is not None and \
-	getattr(meth.__self__, '__class__', None)):
-		for cls in inspect.getmro(meth.__self__.__class__):
-			if meth.__name__ in cls.__dict__:
-				return cls
-		meth = getattr(meth, '__func__', meth)  # fallback to __qualname__ parsing
-	if inspect.isfunction(meth):
-		cls = getattr(inspect.getmodule(meth),
-					  meth.__qualname__.split('.<locals>', 1)[0].rsplit('.', 1)[0], None)
-		if isinstance(cls, type):
-			return cls
-	return getattr(meth, '__objclass__', None)  # handle special descriptor objects
-
-
-def undefined(code):
-	"Run code through pylint and get all undefined variables"
-	# print('code=', code)
-	data = qrun(PYLINT, '--from-stdin stdin --output-format=json --disable=W0312'.split(),
-		        input=code, hidewarning=True)
-	for item in json_loader('\n'.join(data)):
-		idc = item['message-id']
-		msg = item['message']
-		# print(msg)
-		if idc == 'E0602':          # undefined variable:
-			yield re.sub('Undefined variable ', '', msg).strip("'")
-
-
-
-
-
-def process(func, functions, caller=None, level=0, max_level=9):
-	'''
-	Process a function
-	level = current recurrsion level
-	max_level = Max amount of recursion to allow, 0 = unlimited
-	'''
-
-	print = partial(tab_printer, level=level)		#pylint: disable=W0622
-
-	def alias_finder(name, module):
-		'''Find a line of code that is the aliases a function,
-		Ex: auto_cols = autocolumns
-		Global declarations only!
-		'''
-		print("searching for:", name, 'in', module)
-		for line in getsource(module):
-			if line.startswith(name):
-				print('alias found:', line)
-				functions[name] = [line]
-				functions.move_to_end(name, last=False)
-
-	if level:
-		print('\n\n')
-
-	mod = inspect.getmodule(func)
-
-	# If reached a default mod, return
-	if mod.__name__ in sys.builtin_module_names or mod.__file__.startswith('/usr/lib'):
-		print("Looking for func:", func.__name__, "in caller", caller)
-		# search_imports(func.__name__, caller)
-		return
-
-	if func == mod:
-		print("Looking for mod", func.__name__, "in caller", caller.__name__)
-		# search_imports(func.__name__, caller)
-		return
-	else:
-		print(func, type(func), 'from module', mod)
-
-	# If it's a method of a class, get the whole class
-	if inspect.ismethod(func):
-		parent = get_class_that_defined_method(func)
-		if get_func_name(parent) not in functions:
-			print("Processing method", func, "of", parent)
-			print(func.__name__, '=', func)
-
-			if hasattr(func, '__self__'):
-				print("Detected", func.__name__, "is bound method")
-				alias_finder(func.__name__, mod)
-			func = parent
-		else:
-			print("Already processed:", parent)
-			return
-
-	# Get code
-	name = get_func_name(func)
-	if name not in functions:
-		code = getsource(func)
-		functions[name] = code
-		print("Loaded:", plural(len(code), 'line'), 'of code')
-	else:
-		code = functions[name]
-
-	# Get words from within function
-	if func in FUNC_UNDEF:
-		words = FUNC_UNDEF[func]
-	else:
-		words = list(undefined('\n'.join(code)))
-		FUNC_UNDEF[func] = words
-	print('Function:', func, 'words = ', words)
-
-	# Process child functions
-	mod_vars = vars(mod)
-	for word in words:
-		if word in mod_vars.keys():
-			subfunc = mod_vars[word]
-			if word != subfunc.__name__:
-				alias_finder(word, inspect.getmodule(subfunc))
-			if subfunc != func:
-				if max_level and level + 1 > max_level:
-					continue
-				process(subfunc, functions, caller=mod, level=level + 1)
-
-	# Look for words imported by module
-	for word in words:
-		for line in load_imports(mod):
-			if word in line.split():
-				print('code:', repr(line))
-				MYIMPORTS[word] = line
-				break
-
-
-def get_func_name(func):
-	"Return the name for a function in functions"
-	if type(func) == str:
-		name = func
-	else:
-		try:
-			name = func.__name__
-		except AttributeError:
-			# hasattr fails here:
-			# https://docs.python.org/3/reference/expressions.html#atom-identifiers
-			name = str(func)
-	return name
-
-
-def get_code_words(filename, members, common_imports):
-	print("\n\nProcessing:", filename)
-	functions = odict()     # Functions and code found in mymod
-
-
-
-	# Read through every line in the source code file, branching into the imports for more functions
-	if '*' in common_imports:
-		gen = iter(star_namer.scrape_wildcard(filename, members).keys())
-	else:
-		gen = iter(common_imports)
-
-	for word in gen:
-		word = word.strip(',')
-		if word in members.keys():
-			func = members[word]
-
-			# For non functions, do an import
-			if not callable(func):
-				if isinstance(func, types.ModuleType):
-					print("Skipping root module:", func.__name__)
-				elif word in members.keys() and not word.startswith('__'):
-					print("Found root Variable:", word)
-					if not hasattr(func, '__dict__'):
-						code = func
-						if type(func) == str:
-							code = repr(func)
-						else:
-							code = func
-						functions[word] = [word + ' = ' + code]
-						continue
-					else:
-						functions[word] = [get_line(inspect.getmodule(func), word), ]
-
-			if func not in functions:
-				print('\n')
-				process(func, functions, level=0)
-	return functions
-
-################################################################################
-# Main
-
-
-def main():
-	args = [\
-		["output", "output_name", str, shared.OUTPUT_NAME],
-		"Output file name",
+	opts = [
+		["name", "output_name", str, shared.OUTPUT_NAME],
+		"Output file name. Type: 'same' to copy.",
+		["directory", "output_dir", str, '/tmp/Star_Wrangler'],
+		"Output directory (must be different that source)",
 		["onefile", "", bool],
 		"Combine script and functions in one file",
-		]
-	positionals = [\
+		['max', 'max_level', int, 9],
+		"Maxmimum recursion level when searching for function references",
+		['nofollow', '', bool],
+		"Don't Follow imports to new modules instead of scraping import lines",
+	]
+	positionals = [
 		["mymod"],
 		"Module name to copy function from",
-		["scripts", '', list],
+		["scripts", 'filenames', list],
 		"Python scripts to scan through",
-		]
+	]
 
-	args = easy_parse(args, positionals)
-	mymod = star_namer.load_mod(args.mymod)
-	mod_name = os.path.basename(mymod.__file__).rstrip('.py')
-	members = dict(inspect.getmembers(mymod))
-	onefile = args.onefile
-	output_name = args.output_name.rstrip('.py')
-	filenames = args.scripts
+	# Load the args:
+	args = easy_parse(opts, positionals, usage='<module file> <script 1> <script 2> ...')
 
-	if not filenames:
-		error("You must specify at least one filename")
-	for name in filenames:
+	# Error checking:
+	if not args.filenames:
+		error("You must specify at least two filenames")
+	for name in args.filenames:
 		if not os.path.exists(name):
 			error(name, "does not exist")
-
-	if onefile:
-		if len(filenames) != 1:
+	if args.onefile:
+		if len(args.filenames) != 1:
 			error("--onefile mode can only be used with a single file")
+
+	return args
+
+
+class Processor():
+	"Process a filename for undefined words found in mymod"
+	term_width = shutil.get_terminal_size()[0] - 1
+
+	def __init__(self, mymod, follow=True, max_level=9):
+		self.imports = odict()         	 # Required modules to be imported
+		self.words = dict()				 # Dict of words to functions
+		self.functions = odict()	     # Functions to code found in self.mymod
+		self.aliases = odict()			 # One line global definitions
+		self.mymod = mymod				 # Module to look for code inside
+
+		self.max_level = max_level		 # Max recursion level
+		self.follow	= follow		     # Follow imports to new modules instead of scraping import lines
+
+
+
+	def process(self, name, mod=None, level=0):
+		'''Process a function'''
+		#Change to process word instead of func to handle direct get_words
+
+		def iprint(*args, **kargs):
+			tab_printer(*args, level=level, header='', **kargs)
+
+
+		def alias_finder(name, mod):
+			'''Find a line of code that is the aliases a function: eprint = Eprinter()
+			Ex: auto_cols = autocolumns
+			Global declarations only!
+			'''
+			iprint("alias_finder searching for:", name, 'in', mod)
+			for line in getsource(mod):
+				if line.startswith(name):
+					iprint('alias found:', line)
+					self.aliases[name] = line
+					self.words[name] = line
+					for word in iter_nodes(line):
+						if word != name:
+							self.process(word, mod=mod, level=level+1)
+
+
+		def search_imports(word, amod=None):
+			"Search import lines for word"
+			if not amod:
+				amod = mod
+			iprint("search_imports:", word, 'in mod', amod)
+			for line in load_imports(amod):
+				#iprint('\t'+line)
+				if word in line.split():
+					iprint('Found import line:', repr(line))
+					self.imports[word] = line
+					return True
+			return False
+
+
+		#Use name to find function
+		iprint('\n')
+		if name in self.words or name in self.imports:
+			return True
+		if mod is None:
+			mod = self.mymod
+		caller_mod = mod
+		modvars = vars(mod)
+		if name not in modvars:
+			return False
+		else:
+			func = modvars[name]
+		iprint("Name:", name, func)
+		mod = inspect.getmodule(func)
+		if not mod:
+			mod = caller_mod
+		iprint('Module:', mod)
+		modname = get_mod_name(mod)
+		modvars = vars(mod)
+
+
+		#If the name doesn't match, it's an alias
+		if name != get_func_name(func):
+			alias_finder(name, mod)
+
+
+		# If reached a default mod, return
+		if modname in sys.builtin_module_names or mod.__file__.startswith('/usr/lib'):
+			iprint("Mod is builtin:", mod)
+			return search_imports(name, caller_mod)
+		# Don't scrape builtins
+		if inspect.isbuiltin(func):
+			iprint("Skipping builtin:", func)
+			return False
+		if func == mod:
+			return False
+
+		# If it's a method of a class, get the whole class
+		if inspect.ismethod(func):
+			parent = get_class_that_defined_method(func)
+			if get_func_name(parent) not in self.words:
+				iprint("Processing method", func, "of", parent)
+				iprint(func.__name__, '=', func)
+
+				if hasattr(func, '__self__'):
+					iprint("Detected", func.__name__, "is bound method")
+					alias_finder(func.__name__, mod)
+				func = parent
+			else:
+				iprint("Already processed:", parent)
+				return False
+
+		if not callable(func):
+			iprint(name, 'is not a function')
+			return alias_finder(name, mod)
+		self.words[name] = func
+
+		# Get code
+		if func in self.functions:
+			return False
+		code = getsource(func)
+		self.functions[func] = code
+		iprint("Loaded:", plural(len(code), 'line'), 'of code')
+
+
+		# Get words from within function and process them:
+		words = undefined(func)
+		if words:
+			iprint('words =', words)
+		for word in words:
+			if word in self.words:
+				continue
+
+			if not self.follow:
+				if word not in self.imports:
+					if word not in self.words:
+						search_imports(word, caller_mod)
+			if self.follow:
+				if not self.process(word, mod=mod, level=level+1):
+					if word not in self.words:
+						search_imports(word, caller_mod)
+		return True
+
+
+	def get_code_words(self, filename, common_imports):
+		print("\n\nProcessing:", filename)
+		members = dict(inspect.getmembers(self.mymod))
+
+		# Read through every line in the source code file, branching into the imports for more functions
+		if '*' in common_imports:
+			gen = iter(scrape_wildcard(filename, members).keys())
+		else:
+			gen = iter(common_imports)
+
+		for word in gen:
+			word = word.strip(',')
+			self.process(word, self.mymod)
+		return self.functions
+
+
+
+
+################################################################################
+
+def main():
+	args = get_args()
+	mymod = load_mod(args.mymod)
+	mod_name = get_mod_name(mymod)
+	members = dict(inspect.getmembers(mymod))
+	output_name = args.output_name.rstrip('.py')
+	if output_name == 'same':
+		output_name = mod_name
+	filenames = args.filenames
+
+
+	if args.onefile:
 		filename = filenames[0]
-		output_filename = os.path.join('/tmp/Star_Wrangler', os.path.basename(filename))
+		output_filename = os.path.join(args.output_dir, os.path.basename(filename))
 	else:
-		output_filename = os.path.join('/tmp/Star_Wrangler', output_name+'.py')
+		output_filename = os.path.join(args.output_dir, output_name + '.py')
+	if samepath(output_filename, *filenames):
+		error("Cannot overwrite self!")
 	mkdir('/tmp/Star_Wrangler')
 
-	print('Mod Functions:')
-	auto_cols([(key, str(val).replace('\n', ' ')) for key, val in sorted(members.items())], crop=[0, 200])
+	print(mod_name, 'functions:')
+	auto_cols([(name, str(func).replace('\n', ' ')) for name, func in sorted(members.items())], crop=[0, 200])
 	print("\n")
 
-	#Generate dict of required functions and their code
+	# Generate dict of required functions and their code
 	functions = odict()         # Dict of function names to code
 	file_functions = dict()     # Dict filenames to function dicts
-	file_imports = dict()			# Dict of filenames to import lists
+	file_imports = dict()       # Dict of filenames to import lists
+	proc = Processor(mymod, max_level=args.max_level, follow=not args.nofollow)
 	for filename in filenames:
-		dirname = os.path.dirname(filename)
-		if samepath(filename, dirname, output_filename):
-			error("Cannot overwrite self!")
-
-		#source, common_imports, func_start = scrape_imports(filename, output_name, mymod)
+		# dirname = os.path.dirname(filename)
 		line_nums = set()
 		imports = []
 		with open(filename) as f:
@@ -347,71 +258,69 @@ def main():
 					line_nums.add(num)
 					imports.append(re.sub('.*import ', '', line))
 		if not imports:
-			warn("Could not find any common imports in", filename, "for module name:", mod_name)
+			warn("Could not find any common imports in", filename, "for module name:", mod_name, delay=0)
 		else:
 			file_imports[filename] = imports
-			sub = get_code_words(filename, members, [re.sub(' as .*$', '', word) for word in imports])
+			sub = proc.get_code_words(filename, [re.sub(' as .*$', '', word) for word in imports])
 			file_functions[filename] = sub
 			for func in sub:
 				if func not in functions:
 					functions[func] = sub[func]
 
+	if not functions:
+		print("No functions discovered")
+		sys.exit(0)
 
-	# Write code to output
 	print('\n' * 5)
 	print("Done. Outputting to file:", output_filename)
 	print('#' * 80, '\n')
 	output = []
 
-
 	def owl(*args):
 		"Output write lines"
 		output.append(' '.join(args))
 
-
 	# Header
-	if not onefile:
+	if not args.onefile:
 		owl("#!/usr/bin/python3")
 		owl(shared.HEADER.strip())
-	if onefile:
+	if args.onefile:
 		owl(shared.HEADER.replace('file', 'section').strip())
 
-
 	# Write import lines to top of the file
-	# print("Imports:", *MYIMPORTS.items(), sep='\n')
 	owl('')
-	#func_names = [get_func_name(func) for func in functions]
 	func_names = functions.keys()
-	for line in sorted(MYIMPORTS.values(), key=len):
+	for line in sorted(proc.imports.values(), key=len):
 		words = re.sub('.* import ', '', line).split()
 		if not any([word in func_names for word in words]):
 			owl(line)
 		else:
 			print("Skipping locally referenced import line:", line)
-	if MYIMPORTS:
+	if proc.imports:
 		owl("\n")
 
-
 	# Functions
-	for func, code in reversed(functions.items()):
+	for code in reversed(functions.values()):
 		owl('\n'.join(code))
 		owl('\n')
 
+	#Aliases
+	for line in set(proc.aliases.values()):
+		owl(line)
 
 	# Put it all together and output
-	if onefile:
+	if args.onefile:
 		ie = max(line_nums)
 		source = source.splitlines()
 		for num in line_nums:
 			source.pop(num)
-		output = source[:ie] + ['#'*80] + output + ['#'*80, '', ''] + source[ie:]
+		output = source[:ie] + ['#' * 80] + output + ['#' * 80, '', ''] + source[ie:]
 	output.append("\n'''\n" + shared.FOOTER.strip())
 	output.append(time.strftime('%Y-%m-%d', time.localtime()))
 	output.append("'''")
 	with open(output_filename, 'w') as out:
 		for line in output:
 			out.write(line + '\n')
-
 
 	# List imports for each file for copy paste
 	# https://www.python.org/dev/peps/pep-0008/#imports
@@ -422,7 +331,6 @@ def main():
 			print(line.rstrip(','))
 		print('\n')
 
-
 	# Finished
 	print(rfs(os.path.getsize(output_filename)), 'of code saved to', output_filename)
 	qrun('chmod', '+x', output_filename)
@@ -431,6 +339,6 @@ def main():
 		  os.path.join(os.path.dirname(os.path.realpath(filename)), os.path.basename(output_filename)))
 
 
+
 if __name__ == "__main__":
-	PYLINT = star_namer.check_pylint()
 	main()

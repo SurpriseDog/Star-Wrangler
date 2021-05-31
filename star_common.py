@@ -3,15 +3,28 @@
 # To see how this file was created visit: https://github.com/SurpriseDog/Star-Wrangler
 # Written by SurpriseDog at: https://github.com/SurpriseDog
 
-import re
 import os
+import re
 import sys
-import json
 import math
 import time
-import argparse
+import json
 import subprocess
+from argparse import SUPPRESS
+from argparse import ArgumentParser
 from shutil import get_terminal_size
+
+
+def json_loader(data):
+	try:
+		tree = json.loads(data)
+	except json.decoder.JSONDecodeError as err:
+		print('\n'*5)
+		if len(data) > 5000:
+			data = data[:5000] + ' ...'
+		print('Json Data:', repr(data))
+		raise ValueError("Json error", err.__class__.__name__)
+	return tree
 
 
 def search_list(expr, the_list, getfirst=False, func='match', ignorecase=True, searcher=None):
@@ -128,528 +141,8 @@ def quickrun(*cmd, check=False, encoding='utf-8', errors='replace', mode='w', in
 	return stdout
 
 
-def argfixer():
-	'''Fix up args for argparse. Lowers case and turns -args into --args'''
-	out = []
-	for word in sys.argv:
-		if word.startswith('-'):
-			word = word.lower()
-		if re.match('^-[^-]', word):
-			out.append('-' + word)
-		else:
-			out.append(word)
-	return out[1:]
-
-
-class DotDict(dict):
-	'''Example:
-	m = dotdict({'first_name': 'Eduardo'}, last_name='Pool', age=24, sports=['Soccer'])
-	'''
-	# Source: https://stackoverflow.com/questions/2352181/how-to-use-a-dot-to-access-members-of-dictionary
-
-	def __init__(self, *args, **kwargs):
-		super(DotDict, self).__init__(*args, **kwargs)
-		for arg in args:
-			if isinstance(arg, dict):
-				for k, v in arg.items():
-					self[k] = v
-
-		if kwargs:
-			for k, v in kwargs.items():
-				self[k] = v
-
-	def __getattr__(self, attr):
-		return self.get(attr)
-
-	def __setattr__(self, key, value):
-		self.__setitem__(key, value)
-
-	def __setitem__(self, key, value):
-		super(DotDict, self).__setitem__(key, value)
-		self.__dict__.update({key: value})
-
-	def __delattr__(self, item):
-		self.__delitem__(item)
-
-	def __delitem__(self, key):
-		super(DotDict, self).__delitem__(key)
-		del self.__dict__[key]
-
-
-def list_get(lis, index, default=''):
-
-	# Fetch a value from a list if it exists, otherwise return default
-	# Now accepts negative indexes
-	length = len(lis)
-	if -length <= index < length:
-		return lis[index]
-	else:
-		return default
-
-
-def undent(text, tab=''):
-	return '\n'.join([tab + line.lstrip() for line in text.splitlines()])
-
-
-def update_parser(lines, parser=None, hidden=False, positionals=False):
-	'''
-	This is a more intuitive method for adding optional arguments.
-	For positional arguments, use the standard syntax.
-
-	Example: basic_args = [\
-	('--alias', 'variable_name', type, default),
-	"help string",
-	...
-	]
-
-	group_basic = parser.add_argument_group('Basic Arguments', '')
-	update_parser(basic_args, group_basic)
-
-	#You only need to include the arguments required, but you can't skip over any.
-		('--alias', '',)        # okay
-		('--alias', type,)      # not okay
-
-	#Substitute the word list with a number like 2 to get that number of args required.
-
-	# See what your arugments are producing with:
-		auto_cols(sorted([[key, repr(val)] for key, val in (vars(parse_args())).items()]))
-
-
-	'''
-
-	# Make sure the loop ends on a help string
-	if not isinstance(lines[-1], str):
-		lines.append("")
-
-	alias = None        #
-	varname = None      # Variable Name
-	default = None      # Default value
-	out = []
-
-	def update():
-		nonlocal alias
-		"# Update argument to parser:"
-		if parser:
-			if positionals:
-				parser.add_argument(alias, default=default, nargs=nargs, help=msg)
-			else:
-				alias = '--' + alias
-				if typ == bool:
-					parser.add_argument(alias, dest=varname, default=default, action=action, help=msg)
-				else:
-					parser.add_argument(alias, dest=varname, default=default, type=typ,
-										nargs=nargs, help=msg, metavar='')
-			out.append(dict(alias=alias, dest=varname, typ=typ, default=default, msg=msg))
-
-	for index, args in enumerate(lines):
-
-		# Add help if available
-		if isinstance(args, str):
-			msg = undent(args.strip())
-			if msg and not msg.endswith('.'):
-				last = msg.split()[-1]
-				if last[-1].isalnum() and not last.startswith('-'):
-					msg = msg + '.'
-			if default:
-				msg += "  Default: " + str(default)
-
-		if hidden:
-			# Hide the help text:
-			msg = argparse.SUPPRESS
-
-		# If on a new tuple line, add_argument
-		if alias or varname:
-			update()
-			alias = None
-			varname = None
-			msg = ""
-
-		# Continue if not on a new tuple line
-		if isinstance(args, str):
-			continue
-
-		# Read the values from the tuple:
-		alias = args[0].lstrip('-')
-
-		varname = list_get(args, 1)
-		if not varname:
-			varname = alias
-
-		default = list_get(args, 3, '')
-		typ = list_get(args, 2, type(default))
-		if typ == list:
-			nargs = '*'
-		elif isinstance(typ, int):
-			nargs = typ
-			typ = str
-		else:
-			nargs = '?'
-
-		if typ == bool:
-			if default:
-				action = 'store_false'
-			else:
-				action = 'store_true'
-				default = False
-		if index == len(lines) - 1:
-			update()
-
-	return out
-
-
-class ArgMaster():
-	"A wrapper class for ArgumentParser with easy to use arguments. See update_parser() for details."
-
-	def __init__(self, sortme=True, allow_abbrev=True, usage=None):
-		self.sortme = sortme            # Sort all non positionals args
-		self.groups = []                # List of all groups
-		self.parser = argparse.ArgumentParser(allow_abbrev=allow_abbrev, add_help=False, usage=usage)
-
-	def update(self, args, title=None, sortme=None, **kargs):
-		group = self.parser.add_argument_group(title)
-		args = update_parser(args, group, **kargs)
-		self.groups.append(DotDict(args=args, title=title, sortme=sortme))
-
-	def parse(self, args=None, am_help=True):
-		if not args:
-			args = sys.argv
-
-		if not am_help:
-			self.parser.add_help = True
-			return self.parser.parse_args(args)
-
-		# Match help
-		for arg in args:
-			if re.match('--*h$|--*help$', arg):
-				self.print_help()
-				sys.exit(0)
-		try:
-			return self.parser.parse_args(args)
-		except SystemExit:
-			self.print_help()
-			sys.exit(0)
-
-	def print_help(self, show_type=True, wrap=100, tab='  '):
-		'''Print a custom help message from the ArgumentParser class
-		show_type = append the variable type expected after each optional argument.
-		--arg <int> <int> will expect 2 integers after the arg
-		wrap = word wrap instead of using full terminal. 0 = disable
-		sort = sort alphabetically. Positional variables are never sorted.
-		To sort individual groups, add a special key: group.sortme = True
-
-		Warning: If your variable is not in a group, it will not be shown!'''
-
-		final = []
-		width = 0                       # Max width of the variables column
-		for group in self.groups:
-			out = []
-			for args in group.args:
-				args = DotDict(args)
-				msg = args.msg
-				if msg == argparse.SUPPRESS:
-					continue
-				alias = args.alias
-				if show_type:
-					if args.typ and args.typ != bool:
-						if args.typ == list:
-							typ = '...'
-						else:
-							typ = '<' + str(args.typ).replace('class ', '')[2:-2] + '>'
-					alias += ' ' + typ
-				if len(alias) > width:
-					width = len(alias)
-				out.append([alias, msg])
-
-			if group.sortme is not None:
-				sortme = group.sortme
-			else:
-				sortme = self.sortme
-			if sortme:
-				# Sort the group while mainting the order of positional arguments at the top
-				positionals = [out.pop(line) for line in range(len(out) - 1, -1, -1) if out[line][0].startswith('<')]
-				out.sort()
-				out = list(reversed(positionals)) + out
-			final.append(out)
-
-		for index, out in enumerate(final):
-			group = self.groups[index]
-			if out:
-				for line, _ in enumerate(out):
-					out[line][0] = tab + out[line][0].ljust(width)
-				print()
-				if group.title:
-					print(group.title.rstrip(':') + ':')
-				if group.description:
-					auto_cols([[tab + group.description]])
-				auto_cols(out, wrap=wrap)
-
-
-def easy_parse(optionals_list, pos_list=None, title="Optional Arguments", **kargs):
-	'''Simpler way to pass arguments to ArgMaster class'''
-
-	am = ArgMaster(**kargs)
-	am.update(optionals_list, title)
-	if pos_list:
-		am.update(pos_list, positionals=True)
-	return am.parse(argfixer())
-
-
 def warn(*args, header="\n\nWarning:", delay=1 / 64):
 	time.sleep(eprint(*args, header=header, v=2) * delay)
-
-
-def print_columns(args, col_width=20, columns=None, just='left', space=0, wrap=True):
-	'''Print columns of col_width size.
-	columns = manual list of column widths
-	just = justification: left, right or center'''
-
-	just = just[0].lower()
-	if not columns:
-		columns = [col_width] * len(args)
-
-	output = ""
-	_col_count = len(columns)
-	extra = []
-	for count, section in enumerate(args):
-		width = columns[count]
-		section = str(section)
-
-		if wrap:
-			lines = None
-			if len(section) > width - space:
-				# print(section, len(section), width)
-				# lines = slicer(section, *([width] * (len(section) // width + 1)))
-				lines = indenter(section, wrap=width - space)
-				if len(lines) >= 2 and len(lines[-1]) <= space:
-					lines[-2] += lines[-1]
-					lines.pop(-1)
-			if '\n' in section:
-				lines = section.split('\n')
-			if lines:
-				section = lines[0]
-				for lineno, line in enumerate(lines[1:]):
-					if lineno + 1 > len(extra):
-						extra.append([''] * len(args))
-					extra[lineno][count] = line
-
-		if just == 'l':
-			output += section.ljust(width)
-		elif just == 'r':
-			output += section.rjust(width)
-		elif just == 'c':
-			output += section.center(width)
-	print(output)
-
-	for line in extra:
-		print_columns(line, col_width, columns, just, space, wrap=False)
-
-
-def auto_columns(array, space=4, manual=None, printme=True, wrap=0, crop=None):
-	'''Automatically adjust column size
-	Takes in a 2d array and prints it neatly
-	space = spaces between columns
-	manual = dictionary of column adjustments made to space variable
-	crop = array of max length for each column, 0 = unlimited
-	example: {-1:2} sets the space variable to 2 for the last column'''
-	if not manual:
-		manual = dict()
-
-	# Convert generators and map objects:
-	array = list(array)
-
-	if crop:
-		out = []
-		for row in array:
-			row = list(row)
-			for index, _ in enumerate(row):
-				line = str(row[index])
-				cut = crop[index]
-				if len(line) > cut > 3:
-					row[index] = line[:cut-3]+'...'
-			out.append(row)
-		array = out
-
-
-	# Fixed so array can have inconsistently sized rows
-	col_width = {}
-	for row in array:
-		row = list(map(str, row))
-		for col, _ in enumerate(row):
-			length = len(row[col])
-			if length > col_width.get(col, 0):
-				col_width[col] = length
-
-	col_width = [col_width[key] for key in sorted(col_width.keys())]
-	spaces = [space] * len(col_width)
-	spaces[-1] = 0
-
-	# Make any manual adjustments
-	for col, val in manual.items():
-		spaces[col] = val
-
-	col_width = [sum(x) for x in zip(col_width, spaces)]
-
-	# Adjust for line wrap
-	max_width = get_terminal_size().columns     # Terminal size
-	if wrap:
-		max_width = min(max_width, wrap)
-	extra = sum(col_width) - max_width          # Amount columns exceed the terminal width
-
-	def fill_remainder():
-		"After operation to reduce column sizes, use up any remaining space"
-		remain = max_width - sum(col_width)
-		for x, _ in enumerate(col_width):
-			if remain:
-				col_width[x] += 1
-				remain -= 1
-
-	if extra > 0:
-		# print('extra', extra, 'total', total, 'max_width', max_width)
-		# print(col_width, '=', sum(col_width))
-		if max(col_width) > 0.5 * sum(col_width):
-			# If there's one large column, reduce it
-			index = col_width.index(max(col_width))
-			col_width[index] -= extra
-			if col_width[index] < max_width // len(col_width):
-				# However if that's not enough reduce all columns equally
-				col_width = [max_width // len(col_width)] * len(col_width)
-				fill_remainder()
-		else:
-			# Otherwise reduce all columns proportionally
-			col_width = [int(width * (max_width / (max_width + extra))) for width in col_width]
-			fill_remainder()
-		# print(col_width, '=', sum(col_width))
-
-	# Turn on for visual representation of columns:
-	# print(''.join([str(count) * x  for count, x in enumerate(col_width)]))
-
-	if printme:
-		for row in array:
-			print_columns(row, columns=col_width, space=0)
-
-	return col_width
-
-
-def sig(num, digits=3):
-	"Return number formatted for significant digits"
-	if num == 0:
-		return '0'
-	negative = '-' if num < 0 else ''
-	num = abs(float(num))
-	power = math.log(num, 10)
-	if num < 1:
-		num = int(10**(-int(power) + digits) * num)
-		return negative + '0.' + '0' * -int(power) + str(int(num)).rstrip('0')
-	elif power < digits - 1:
-		return negative + ('{0:.' + str(digits) + 'g}').format(num)
-	else:
-		return negative + str(int(num))
-
-
-def rfs(num, mult=1000, digits=3, order=' KMGTPEZY', suffix='B'):
-	'''A "readable" file size
-	mult is the value of a kilobyte in the filesystem. (1000 or 1024)'''
-	if abs(num) < mult:
-		return str(num) + suffix
-	# Faster than using math.log:
-	for x in range(len(order) - 1, -1, -1):
-		magnitude = mult**x
-		if abs(num) >= magnitude:
-			return sig(num / magnitude, digits) + ' ' + (order[x] + suffix).rstrip()
-	return str(num) + suffix		#Never called, but needed for pylint
-
-
-def samepath(*paths):
-	"Are any of these file pathname duplicates?"
-	return bool(len({os.path.abspath(path) for path in paths}) != len(paths))
-
-
-def mkdir(target, exist_ok=True, **kargs):
-	"Make a directory without fuss"
-	os.makedirs(target, exist_ok=exist_ok, **kargs)
-
-
-class Eprinter:
-	'''Drop in replace to print errors if verbose level higher than setup level
-	To replace every print statement type: from common import eprint as print
-
-	eprint(v=-1)    # Normally hidden messages
-	eprint(v=0)     # Default level
-	eprint(v=1)     # Priority messages
-	eprint(v=2)     # Warnings
-	eprint(v=3)     # Errors
-	'''
-
-	# Setup: eprint = Eprinter(<verbosity level>).eprint
-	# Simple setup: from common import eprint
-	# Usage: eprint(messages, v=1)
-
-	# Don't forget they must end in 'm'
-	BOLD = '\033[1m'
-	WARNING = '\x1b[1;33;40m'
-	FAIL = '\x1b[0;31;40m'
-	END = '\x1b[0m'
-
-	def __init__(self, verbose=0):
-		self.level = verbose
-		self.history = []
-
-		#If string starts with '\n', look at history to make sure previous newlines don't exist
-		self.autonewlines = True
-
-	def newlines(self, num=1):
-		"Print the required number of newlines after checking history to make sure they exist."
-		lines = sum([1 for line in self.history[-num:] if not line.strip()])
-		num -= lines
-		if num:
-			print('\n' * (num), end='')
-		return num
-
-
-	def eprint(self, *args, v=0, color=None, header=None, **kargs):
-		'''Print to stderr
-		Custom color example: color='1;33;40'
-		More colors: https://stackoverflow.com/a/21786287/11343425
-		'''
-		verbose = v
-		# Will print if verbose >= level
-		if verbose < self.level:
-			return 0
-
-		if not color:
-			if v == 2 and not color:
-				color = f"{self.WARNING}"
-			if v >= 3 and not color:
-				color = f"{self.FAIL}" + f"{self.BOLD}"
-		else:
-			color = '\x1b[' + color + 'm'
-
-		msg = ' '.join(map(str, args))
-		if self.autonewlines:
-			match = re.match('^\n*', msg)
-			if match:
-				num = self.newlines(match.span()[1])
-				if num:
-					#print('created', num, 'newlines', repr(msg[:64]))
-					msg = msg.lstrip('\n')
-
-
-		self.history += msg.splitlines()
-		if len(self.history) > 64:
-			self.history = self.history[64:]
-
-		if header:
-			msg = header + ' ' + msg
-		if color:
-			print(color + msg + f"{self.END}", file=sys.stderr, **kargs)
-		else:
-			print(msg, file=sys.stderr, **kargs)
-		return len(msg)
-
-
-def error(*args, header='\nError:', **kargs):
-	eprint(*args, header=header, v=3, **kargs)
-	sys.exit(1)
 
 
 def plural(val, word, multiple=None):
@@ -735,12 +228,574 @@ def plural(val, word, multiple=None):
 		return str(val) + ' ' + replacement
 
 
-def indenter(*args, header='', level=0, tab=4, wrap=0, even=False):
-	"Break up text into tabbed lines. Wrap at max characters. 0 = Don't wrap"
+def sig(num, digits=3):
+	"Return number formatted for significant digits"
+	if num == 0:
+		return '0'
+	negative = '-' if num < 0 else ''
+	num = abs(float(num))
+	power = math.log(num, 10)
+	if num < 1:
+		num = int(10**(-int(power) + digits) * num)
+		return negative + '0.' + '0' * -int(power) + str(int(num)).rstrip('0')
+	elif power < digits - 1:
+		return negative + ('{0:.' + str(digits) + 'g}').format(num)
+	else:
+		return negative + str(int(num))
+
+
+def rfs(num, mult=1000, digits=3, order=' KMGTPEZY', suffix='B'):
+	'''A "readable" file size
+	mult is the value of a kilobyte in the filesystem. (1000 or 1024)'''
+	if abs(num) < mult:
+		return str(num) + suffix
+	# Faster than using math.log:
+	for x in range(len(order) - 1, -1, -1):
+		magnitude = mult**x
+		if abs(num) >= magnitude:
+			return sig(num / magnitude, digits) + ' ' + (order[x] + suffix).rstrip()
+	return str(num) + suffix		#Never called, but needed for pylint
+
+
+class Eprinter:
+	'''Drop in replace to print errors if verbose level higher than setup level
+	To replace every print statement type: from common import eprint as print
+
+	eprint(v=-1)    # Normally hidden messages
+	eprint(v=0)     # Default level
+	eprint(v=1)     # Priority messages
+	eprint(v=2)     # Warnings
+	eprint(v=3)     # Errors
+	'''
+
+	# Setup: eprint = Eprinter(<verbosity level>).eprint
+	# Simple setup: from common import eprint
+	# Usage: eprint(messages, v=1)
+
+	# Don't forget they must end in 'm'
+	BOLD = '\033[1m'
+	WARNING = '\x1b[1;33;40m'
+	FAIL = '\x1b[0;31;40m'
+	END = '\x1b[0m'
+
+	def __init__(self, verbose=0):
+		self.level = verbose
+		self.history = []
+
+		#If string starts with '\n', look at history to make sure previous newlines don't exist
+		self.autonewlines = True
+
+	def newlines(self, num=1):
+		"Print the required number of newlines after checking history to make sure they exist."
+		lines = sum([1 for line in self.history[-num:] if not line.strip()])
+		num -= lines
+		if num:
+			print('\n' * (num), end='')
+		return num
+
+
+	def eprint(self, *args, v=0, color=None, header=None, **kargs):
+		'''Print to stderr
+		Custom color example: color='1;33;40'
+		More colors: https://stackoverflow.com/a/21786287/11343425
+		'''
+		verbose = v
+		# Will print if verbose >= level
+		if verbose < self.level:
+			return 0
+
+		if not color:
+			if v == 2 and not color:
+				color = f"{self.WARNING}"
+			if v >= 3 and not color:
+				color = f"{self.FAIL}" + f"{self.BOLD}"
+		else:
+			color = '\x1b[' + color + 'm'
+
+		msg = ' '.join(map(str, args))
+		if self.autonewlines:
+			match = re.match('^\n*', msg)
+			if match:
+				num = self.newlines(match.span()[1])
+				if num:
+					#print('created', num, 'newlines', repr(msg[:64]))
+					msg = msg.lstrip('\n')
+
+
+		self.history += msg.splitlines()
+		if len(self.history) > 64:
+			self.history = self.history[64:]
+
+		if header:
+			msg = header + ' ' + msg
+		if color:
+			print(color + msg + f"{self.END}", file=sys.stderr, **kargs)
+		else:
+			print(msg, file=sys.stderr, **kargs)
+		return len(msg)
+
+
+def error(*args, header='\nError:', **kargs):
+	eprint(*args, header=header, v=3, **kargs)
+	sys.exit(1)
+
+
+def mkdir(target, exist_ok=True, **kargs):
+	"Make a directory without fuss"
+	os.makedirs(target, exist_ok=exist_ok, **kargs)
+
+
+def argfixer():
+	'''Fix up args for argparse. Lowers case and turns -args into --args'''
+	out = []
+	for word in sys.argv:
+		if word.startswith('-'):
+			word = word.lower()
+		if re.match('^-[^-]', word):
+			out.append('-' + word)
+		else:
+			out.append(word)
+	return out[1:]
+
+
+class DotDict(dict):
+	'''
+	Example:
+	m = dotdict({'first_name': 'Eduardo'}, last_name='Pool', age=24, sports=['Soccer'])
+
+	Modified from:
+	https://stackoverflow.com/questions/2352181/how-to-use-a-dot-to-access-members-of-dictionary
+	to set unlimited chained .variables like DotDict().tom.bob = 3
+	'''
+
+	def __init__(self, *args, default=None, **kwargs):
+		super(DotDict, self).__init__(*args, **kwargs)
+		for arg in args:
+			if isinstance(arg, dict):
+				for k, v in arg.items():
+					self[k] = v
+#
+		if kwargs:
+			for k, v in kwargs.items():
+				self[k] = v
+#
+	def __getattr__(self, attr):
+		if attr in self:
+			return self.get(attr)
+		else:
+			self[attr] = DotDict()
+			return self[attr]
+#
+	def __setattr__(self, key, value):
+		self.__setitem__(key, value)
+#
+	def __contains__(self, key):
+		return bool(key in self.__dict__)
+#
+	def __setitem__(self, key, value):
+		super(DotDict, self).__setitem__(key, value)
+		self.__dict__.update({key: value})
+#
+	def __delattr__(self, item):
+		self.__delitem__(item)
+#
+	def __delitem__(self, key):
+		super(DotDict, self).__delitem__(key)
+		del self.__dict__[key]
+
+
+def undent(text, tab=''):
+	return '\n'.join([tab + line.lstrip() for line in text.splitlines()])
+
+
+def list_get(lis, index, default=''):
+
+	# Fetch a value from a list if it exists, otherwise return default
+	# Now accepts negative indexes
+	length = len(lis)
+	if -length <= index < length:
+		return lis[index]
+	else:
+		return default
+
+
+def update_parser(lines, parser=None, hidden=False, positionals=False):
+	'''
+	This is a more intuitive method for adding optional arguments.
+	For positional arguments, use the standard syntax.
+
+	Example: basic_args = [\
+	('--alias', 'variable_name', type, default),
+	"help string",
+	...
+	]
+
+	group_basic = parser.add_argument_group('Basic Arguments', '')
+	update_parser(basic_args, group_basic)
+
+	#You only need to include the arguments required, but you can't skip over any.
+		('--alias', '',)        # okay
+		('--alias', type,)      # not okay
+
+	#Substitute the word list with a number like 2 to get that number of args required.
+
+	# See what your arugments are producing with:
+		auto_cols(sorted([[key, repr(val)] for key, val in (vars(parse_args())).items()]))
+
+
+	'''
+
+	# Make sure the loop ends on a help string
+	if not isinstance(lines[-1], str):
+		lines.append("")
+
+	alias = None        #
+	varname = None      # Variable Name
+	default = None      # Default value
+	out = []
+
+	def update():
+		nonlocal alias
+		"# Update argument to parser:"
+		if parser:
+			if positionals:
+				parser.add_argument(varname, default=default, nargs=nargs, help=msg)
+			else:
+				alias = '--' + alias
+				if typ == bool:
+					parser.add_argument(alias, dest=varname, default=default, action=action, help=msg)
+				else:
+					parser.add_argument(alias, dest=varname, default=default, type=typ,
+										nargs=nargs, help=msg, metavar='')
+			out.append(dict(alias=alias, dest=varname, typ=typ, default=default, msg=msg))
+			# print('alias', alias, 'varname', varname, 'default', default, 'type', typ, 'nargs', nargs)
+
+	for index, args in enumerate(lines):
+
+		# Add help if available
+		if isinstance(args, str):
+			msg = undent(args.strip())
+			if msg and not msg.endswith('.'):
+				last = msg.split()[-1]
+				if last[-1].isalnum() and not last.startswith('-'):
+					msg = msg + '.'
+			if default:
+				msg += "  Default: " + str(default)
+
+		if hidden:
+			# Hide the help text:
+			msg = SUPPRESS
+
+		# If on a new tuple line, add_argument
+		if alias or varname:
+			update()
+			alias = None
+			varname = None
+			msg = ""
+
+		# Continue if not on a new tuple line
+		if isinstance(args, str):
+			continue
+
+		# Read the values from the tuple:
+		alias = args[0].lstrip('-')
+
+		varname = list_get(args, 1)
+		if not varname:
+			varname = alias
+
+		default = list_get(args, 3, '')
+		typ = list_get(args, 2, type(default))
+		if typ == list:
+			nargs = '*'
+			typ = str
+			default = []
+		elif isinstance(typ, int):
+			nargs = typ
+			typ = str
+		else:
+			nargs = '?'
+
+		if typ == bool:
+			if default:
+				action = 'store_false'
+			else:
+				action = 'store_true'
+				default = False
+		if index == len(lines) - 1:
+			update()
+
+	return out
+
+
+class ArgMaster():
+	'''
+	A wrapper class for ArgumentParser with easy to use arguments. See update_parser() for details.
+	sortme will sort all arguments by name (except positionals)
+	other arguments are passed onto the ArgumentParser constructor
+	'''
+
+	def __init__(self, sortme=True, allow_abbrev=True, usage=None, description=None, **kargs):
+		self.sortme = sortme            # Sort all non positionals args
+		self.groups = []                # List of all groups
+		self.usage = usage				# Usage message
+		self.description = description
+		self.parser = ArgumentParser(allow_abbrev=allow_abbrev, add_help=False, usage=SUPPRESS, **kargs)
+		# Allow optionals before positionals:
+		self.intermixed = hasattr(self.parser, 'parse_intermixed_args')
+
+	def update(self, args, title=None, sortme=None, **kargs):
+		group = self.parser.add_argument_group(title)
+		args = update_parser(args, group, **kargs)
+		self.groups.append(DotDict(args=args, title=title, sortme=sortme))
+
+	def parse(self, args=None, am_help=True):
+		if not args:
+			args = sys.argv[1:]
+
+		if not am_help:
+			self.parser.add_help = True
+			return self.parser.parse_args(args)
+
+		# Match help
+		for arg in args:
+			if re.match('--*h$|--*help$', arg):
+				self.print_help()
+				sys.exit(0)
+		try:
+			if self.intermixed:
+				return self.parser.parse_intermixed_args(args)
+			else:
+				return self.parser.parse_args(args)
+		except SystemExit:
+			self.print_help()
+			sys.exit(0)
+
+	def print_help(self, show_type=True, wrap=0, tab='  '):
+		'''Print a custom help message using only ArgMaster args
+		show_type = append the variable type expected after each optional argument.
+		--arg <int> <int> will expect 2 integers after the arg
+		wrap = word wrap instead of using full terminal. 0 = Terminal width
+		sort = sort alphabetically. Positional variables are never sorted.
+		To sort individual groups, add a special key: group.sortme = True
+
+		Warning: If your variable is not in a group, it will not be shown!'''
+
+		if self.description:
+			print('\n' + self.description)
+
+		if self.usage:
+			name = os.path.basename(sys.argv[0])
+			print('\n' + "Usage:", name, self.usage)
+		final = []
+		width = 0                       # Max width of the variables column
+		for group in self.groups:
+			out = []
+			for args in group.args:
+				args = DotDict(args)
+				msg = args.msg
+				if msg == SUPPRESS:
+					continue
+				alias = args.alias
+				if show_type:
+					if args.typ and args.typ != bool:
+						if args.typ == list:
+							typ = '...'
+						else:
+							typ = '<' + str(args.typ).replace('class ', '')[2:-2] + '>'
+						alias += ' ' + typ
+				if len(alias) > width:
+					width = len(alias)
+				out.append([alias, msg])
+
+			if group.sortme is not None:
+				sortme = group.sortme
+			else:
+				sortme = self.sortme
+			if sortme:
+				# Sort the group while mainting the order of positional arguments at the top
+				positionals = [out.pop(line) for line in range(len(out) - 1, -1, -1) if out[line][0].startswith('<')]
+				out.sort()
+				out = list(reversed(positionals)) + out
+			final.append(out)
+
+		for index, out in enumerate(final):
+			group = self.groups[index]
+			if out:
+				for line, _ in enumerate(out):
+					out[line][0] = tab + out[line][0].ljust(width)
+				print()
+				if group.title:
+					print(group.title.rstrip(':') + ':')
+				if group.description:
+					auto_cols([[tab + group.description]])
+				auto_cols(out, wrap=wrap)
+		print()
+
+
+def easy_parse(optionals_list, pos_list=None, **kargs):
+	'''
+	Simpler way to pass arguments to ArgMaster class.
+	All kargs are passed to ArgMaster. See the actual implementation for details.
+	'''
+	am = ArgMaster(**kargs)
+	if pos_list:
+		am.update(pos_list, title="Positional Arguments", positionals=True)
+	am.update(optionals_list, title="Optional Arguments")
+	return am.parse(argfixer())
+
+
+def print_columns(args, col_width=20, columns=None, just='left', space=0, wrap=True):
+	'''Print columns of col_width size.
+	columns = manual list of column widths
+	just = justification: left, right or center'''
+
+	just = just[0].lower()
+	if not columns:
+		columns = [col_width] * len(args)
+
+	output = ""
+	_col_count = len(columns)
+	extra = []
+	for count, section in enumerate(args):
+		width = columns[count]
+		section = str(section)
+
+		if wrap:
+			lines = None
+			if len(section) > width - space:
+				# print(section, len(section), width)
+				# lines = slicer(section, *([width] * (len(section) // width + 1)))
+				lines = indenter(section, wrap=width - space)
+				if len(lines) >= 2 and len(lines[-1]) <= space:
+					lines[-2] += lines[-1]
+					lines.pop(-1)
+			if '\n' in section:
+				lines = section.split('\n')
+			if lines:
+				section = lines[0]
+				for lineno, line in enumerate(lines[1:]):
+					if lineno + 1 > len(extra):
+						extra.append([''] * len(args))
+					extra[lineno][count] = line
+
+		if just == 'l':
+			output += section.ljust(width)
+		elif just == 'r':
+			output += section.rjust(width)
+		elif just == 'c':
+			output += section.center(width)
+	print(output)
+
+	for line in extra:
+		print_columns(line, col_width, columns, just, space, wrap=False)
+
+
+def auto_columns(array, space=4, manual=None, printme=True, wrap=0, crop=None):
+	'''Automatically adjust column size
+	Takes in a 2d array and prints it neatly
+	space = spaces between columns
+	manual = dictionary of column adjustments made to space variable
+	crop = array of max length for each column, 0 = unlimited
+	example: {-1:2} sets the space variable to 2 for the last column
+	wrap = wrap at this many columns. 0 = terminal width
+	'''
+	if not manual:
+		manual = dict()
+
+	# Convert generators and map objects:
+	array = list(array)
+
+	if crop:
+		out = []
+		for row in array:
+			row = list(row)
+			for index, _ in enumerate(row):
+				line = str(row[index])
+				cut = crop[index]
+				if len(line) > cut > 3:
+					row[index] = line[:cut-3]+'...'
+			out.append(row)
+		array = out
+
+
+	# Fixed so array can have inconsistently sized rows
+	col_width = {}
+	for row in array:
+		row = list(map(str, row))
+		for col, _ in enumerate(row):
+			length = len(row[col])
+			if length > col_width.get(col, 0):
+				col_width[col] = length
+
+	col_width = [col_width[key] for key in sorted(col_width.keys())]
+	spaces = [space] * len(col_width)
+	spaces[-1] = 0
+
+	# Make any manual adjustments
+	for col, val in manual.items():
+		spaces[col] = val
+
+	col_width = [sum(x) for x in zip(col_width, spaces)]
+
+	# Adjust for line wrap
+	max_width = get_terminal_size().columns - 1 # Terminal size
+	if wrap:
+		max_width = min(max_width, wrap)
+	extra = sum(col_width) - max_width          # Amount columns exceed the terminal width
+
+	def fill_remainder():
+		"After operation to reduce column sizes, use up any remaining space"
+		remain = max_width - sum(col_width)
+		for x, _ in enumerate(col_width):
+			if remain:
+				col_width[x] += 1
+				remain -= 1
+
+	if extra > 0:
+		# print('extra', extra, 'total', total, 'max_width', max_width)
+		# print(col_width, '=', sum(col_width))
+		if max(col_width) > 0.5 * sum(col_width):
+			# If there's one large column, reduce it
+			index = col_width.index(max(col_width))
+			col_width[index] -= extra
+			if col_width[index] < max_width // len(col_width):
+				# However if that's not enough reduce all columns equally
+				col_width = [max_width // len(col_width)] * len(col_width)
+				fill_remainder()
+		else:
+			# Otherwise reduce all columns proportionally
+			col_width = [int(width * (max_width / (max_width + extra))) for width in col_width]
+			fill_remainder()
+		# print(col_width, '=', sum(col_width))
+
+	# Turn on for visual representation of columns:
+	# print(''.join([str(count) * x  for count, x in enumerate(col_width)]))
+
+	if printme:
+		for row in array:
+			print_columns(row, columns=col_width, space=0)
+
+	return col_width
+
+
+def tab_printer(*args, **kargs):
+	for line in indenter(*args, **kargs):
+		print(line)
+
+
+def indenter(*args, header='', level=0, tab=4, wrap=-4, even=False):
+	'''Break up text into tabbed lines.
+	Wrap at max characters:
+		0 = Don't wrap
+		negtaive = wrap to terminal width minus wrap
+	'''
+	if wrap < 0:
+		wrap = TERM_WIDTH + wrap
 
 	if type(tab) == int:
 		tab = ' ' * tab
-	header = header + tab * level
+	header = str(header) + tab * level
 	words = (' '.join(map(str, args))).split(' ')
 
 	lc = float('inf')       # line count
@@ -770,29 +825,14 @@ def indenter(*args, header='', level=0, tab=4, wrap=0, even=False):
 	return out
 
 
-def tab_printer(*args, **kargs):
-	for line in indenter(*args, **kargs):
-		print(line)
-
-
-def json_loader(data):
-	try:
-		tree = json.loads(data)
-	except json.decoder.JSONDecodeError as err:
-		print('\n'*5)
-		if len(data) > 5000:
-			data = data[:5000] + ' ...'
-		print('Json Data:', repr(data))
-		raise ValueError("Json error", err.__class__.__name__)
-	return tree
-
-
-eprint = Eprinter(verbose=1).eprint     # pylint: disable=C0103
+def samepath(*paths):
+	"Are any of these file pathname duplicates?"
+	return bool(len({os.path.abspath(path) for path in paths}) != len(paths))
 
 
 auto_cols = auto_columns    # pylint: disable=C0103
-
-
+TERM_WIDTH = get_terminal_size().columns
+eprint = Eprinter(verbose=1).eprint     # pylint: disable=C0103
 
 '''
 &&&&%%%%%&@@@@&&&%%%%##%%%#%%&@@&&&&%%%%%%/%&&%%%%%%%%%%%&&&%%%%%&&&@@@@&%%%%%%%
@@ -832,5 +872,5 @@ auto_cols = auto_columns    # pylint: disable=C0103
 &&&&&%(((*.*... . .*,.   .           .*%%#(,.          .    .*,. ..,.,,**/(%#&%%
 
 Generated by https://github.com/SurpriseDog/Star-Wrangler
-2021-05-19
+2021-05-31
 '''

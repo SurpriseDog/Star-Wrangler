@@ -1,7 +1,9 @@
 #!/usr/bin/python3
+# Edit this file with your preferred defaults
 
 PYLINT = "/usr/bin/pylint"  	# Path to pylint with at least version 2.4
-OUTPUT_NAME = "sd_common"		# Name of the file generated
+OUTPUT_NAME = "same"			# Name of the file generated
+
 
 
 HEADER = '''

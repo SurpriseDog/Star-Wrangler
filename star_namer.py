@@ -5,76 +5,73 @@
 
 import os
 import sys
-import types
-import importlib.util
-from inspect import getmembers, isfunction
+import inspect
 
-import shared
-
-from star_common import quickrun, indenter, search_list, warn, error
-
-def check_pylint():
-	# Check pylint version:
-	pylint = shared.PYLINT
-
-	if not os.path.exists(pylint):
-		warn("Pylint path does not exist:", pylint)
-		print("Please install: https://www.pylint.org/#install")
-		print("and then set the correct path in shared.py")
-		sys.exit(1)
-
-	version = quickrun(pylint, '--version')
-	version = search_list('pylint', version, getfirst=True).split()[-1].split('.')[:2]
-	if list(map(int, version)) < [2, 4]:
-		error("Pylint must be at least version 2.4")
-
-	return pylint
-
-
-def scrape_wildcard(filename, modvars):
-	"Get variables imported from module in wild * import"
-	err = "W0614: Unused import "
-	unused = []
-	for line in quickrun([PYLINT, filename]):
-		if err in line:
-			unused.append(line.split(err)[1].split()[0])
-
-	out = dict()
-	for name in set(modvars) - set(unused):
-		if not name.startswith('__'):
-			func = modvars[name]
-			if not isinstance(func, types.ModuleType):
-				out[name] = modvars[name]
-	return out
-
-def load_mod(filename, execute=True):
-	"Load a module given a filename"
-	modname = os.path.basename(filename)
-	modname = os.path.splitext(modname)[0]
-	spec = importlib.util.spec_from_file_location("mymod", filename)
-	mymod = importlib.util.module_from_spec(spec)
-	if execute:
-		spec.loader.exec_module(mymod)
-	return mymod
-
+from universe import get_mod_name, scrape_wildcard, load_mod, get_members
+from star_common import indenter, easy_parse, auto_cols, error, eprint
 
 def main():
-	mymod = load_mod(sys.argv[1])
-	modname = mymod.__name__
-	modvars = dict(getmembers(mymod, isfunction))
+	if len(sys.argv) < 3:
+		print("Usage: ./star_namer.py <module_file> <script_filenames...> --options...")
+		sys.exit(1)
+	args = [\
+		["exclude", "", list],
+		"Exclude any function found in these module names",
+		["local", '', bool],
+		"Don't list any functions outside of file",
+		["actual", '', bool, False],
+		"Print the actual module each function is found in",
+		]
+	positionals = [\
+		["module"],
+		"Module name to search through functions",
+		["scripts", '', list],
+		"Python scripts to scan through",
+		]
+
+	#Load the args:
+	args = easy_parse(args, positionals)
+	filenames = args.scripts
+	for name in filenames:
+		if not os.path.exists(name):
+			error(name, "does not exist")
+
+
+	mymod = load_mod(args.module)
+	modname = get_mod_name(mymod)
+	modvars = get_members(args.module)
 	print("Found defined variables in module", modname+':')
-	for key, val in modvars.items():
-		print(key, val)
+	out = [['Name:', 'Module:', 'Function:']]
+	for name, func in modvars.items():
+		out.append([name, get_mod_name(inspect.getmodule(func)), func])
+	auto_cols(out)
 	print("\n")
 
 
-	filename = sys.argv[2]
-	header = 'from ' + modname + ' import '
-	functions = ', '.join(scrape_wildcard(filename, modvars))
-	for line in indenter(functions, header=header, wrap=80):
-		print(line.rstrip(','))
+	for filename in filenames:
+		functions = scrape_wildcard(filename, modvars)
+		if len(filenames) > 1:
+			print('\n')
+			eprint(filename+':', '\n', v=2)
 
+		if functions:
+			out = dict()
+			for name, func in functions.items():
+				mod = get_mod_name(inspect.getmodule(func))
+				if mod in args.exclude:
+					continue
+				if args.local and mod != modname:
+					continue
+
+				mod = mod if args.actual else modname
+				out.setdefault(mod, []).append(name)
+
+			for mod, funcs in out.items():
+				header = 'from ' + mod + ' import '
+				for line in indenter(', '.join(funcs), header=header, wrap=80):
+					print(line.rstrip(','))
+		else:
+			print("<no functions found>")
 
 if __name__ == "__main__":
-	PYLINT = check_pylint()
 	main()
