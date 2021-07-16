@@ -7,8 +7,11 @@ import os
 import sys
 import inspect
 
-from universe import get_mod_name, scrape_wildcard, load_mod, get_members
-from star_common import indenter, easy_parse, auto_cols, error, eprint
+import universe
+from sd.common import error, eprint
+from sd.columns import indenter, auto_cols
+from sd.arg_master import easy_parse
+
 
 def main():
 	if len(sys.argv) < 3:
@@ -37,19 +40,19 @@ def main():
 			error(name, "does not exist")
 
 
-	mymod = load_mod(args.module)
-	modname = get_mod_name(mymod)
-	modvars = get_members(args.module)
+	mymod = universe.load_mod(args.module)
+	modname = universe.get_mod_name(mymod)
+	modvars = universe.get_members(args.module)
 	print("Found defined variables in module", modname+':')
 	out = [['Name:', 'Module:', 'Function:']]
 	for name, func in modvars.items():
-		out.append([name, get_mod_name(inspect.getmodule(func)), func])
+		out.append([name, universe.get_mod_name(inspect.getmodule(func)), func])
 	auto_cols(out)
 	print("\n")
 
 
 	for filename in filenames:
-		functions = scrape_wildcard(filename, modvars)
+		functions = universe.scrape_wildcard(filename, modvars)
 		if len(filenames) > 1:
 			print('\n')
 			eprint(filename+':', '\n', v=2)
@@ -57,7 +60,7 @@ def main():
 		if functions:
 			out = dict()
 			for name, func in functions.items():
-				mod = get_mod_name(inspect.getmodule(func))
+				mod = universe.get_mod_name(inspect.getmodule(func))
 				if mod in args.exclude:
 					continue
 				if args.local and mod != modname:

@@ -11,7 +11,7 @@ import importlib
 from functools import partial
 
 import shared
-from star_common import search_list, warn, json_loader, error, DotDict, quickrun as qrun
+from sd.common import search_list, warn, json_loader, error, DotDict, quickrun as qrun
 
 CACHED = DotDict()			#Function static variables containing a cache of results
 
@@ -49,7 +49,7 @@ def load_imports(module):
 
 def getsource(item):
 	"Retrieve the source of module or function"
-	cache = CACHED.getsource				# Dict of modules to source code lines
+	cache = CACHED.getsource				# Dict of functions to source code lines
 	if not any([inspect.isclass(item), inspect.ismodule(item), inspect.ismethod(item), inspect.isfunction(item)]):
 		print("Confused by item:", item)
 		print("Trying one level up:", type(item))
@@ -81,6 +81,17 @@ def undefined(func):
 			word = re.sub('Undefined variable ', '', msg).strip("'")
 			words.add(word)
 	return words
+
+
+def get_undefined(source):
+	"Run souce code through pylint and get each undefined variable"
+	data = qrun(get_pylint(), '--from-stdin stdin --output-format=json --disable=W0312'.split(),
+				input=source, hidewarning=True)
+	for item in json_loader('\n'.join(data)):
+		idc = item['message-id']
+		msg = item['message']
+		if idc == 'E0602':          # undefined variable:
+			yield item
 
 
 def scrape_imports(source):
