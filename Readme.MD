@@ -32,7 +32,7 @@ Get help with -h
 
 ----
 
-from_to_import.py can convert a script with from module name import function to modname.function:
+from_to_import.py can convert a script with: "from modname import function" to "import modname"
 
 For example:
 

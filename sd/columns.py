@@ -2,7 +2,7 @@
 # Manipulate columns of text
 
 from shutil import get_terminal_size
-from structs import map_nested
+from sd.common import map_nested
 
 TERM_WIDTH = max(get_terminal_size().columns, 20)
 
@@ -180,7 +180,7 @@ def auto_columns(array, space=4, manual=None, printme=True, wrap=0, crop=None, j
 	space = spaces between columns
 	manual = dictionary of column adjustments made to space variable
 	crop = dict of max length for each column, 0 = unlimited
-	example: {-1:2} sets the space variable to 2 for the last column
+		example: {-1:2} sets the space variable to 2 for the last column
 	wrap = wrap at this many columns. 0 = terminal width
 	printme = False : return array instead of printing it
 	'''
