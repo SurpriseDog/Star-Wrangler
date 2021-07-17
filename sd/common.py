@@ -3,115 +3,13 @@
 # To see how this file was created visit: https://github.com/SurpriseDog/Star-Wrangler
 # Written by SurpriseDog at: https://github.com/SurpriseDog
 
-import os
 import re
+import os
 import sys
 import math
 import time
 import json
 import subprocess
-
-
-def sort_array(array, *columns, **kargs):
-	'''Sort an array by an arbitrary number of columns
-	Specify most important column first or leave blank to go left to right
-	Starting with Python 2.3, the sort() method is guaranteed to be stable.
-	https://docs.python.org/2/library/stdtypes.html#index-29
-	'''
-	if not array:
-		return array
-	if not columns:
-		columns = list(range(len(array[0])))
-	for col in reversed(columns):
-		array.sort(key=lambda x: x[col], **kargs)
-
-
-def query(*question, confirmation='', negation=''):
-	'''Ask the user a question. They can type y Y yes Yes and so on.
-	Return True if yes, False if No
-	If confirmation is passed, then the user must type the same word as confirmation to return True
-	If negation is passed user can type the negation word to return False'''
-
-	if not question:
-		question = ("Continue?",)
-	msg = ' '.join(question)
-
-	while True:
-		response = input(msg + ' ')
-		response = response.strip().lower()
-		if not response:
-			continue
-
-		# Have user confirm
-		if response and confirmation:
-			if response == confirmation.strip().lower():
-				return True
-			if negation:
-				if response == negation.strip().lower():
-					return False
-				else:
-					continue
-			else:
-				return False
-
-		# Convert response to a single letter y or n
-		if response:
-			response = response[0]
-			if response == 'y':
-				return True
-			elif response == 'n':
-				return False
-
-
-def str_insert(string, index, sub):
-	#return string[:index] + sub + string[index:]
-	return ''.join((string[:index], sub, string[index:]))
-
-
-class DotDict(dict):
-	'''
-	Example:
-	m = dotdict({'first_name': 'Eduardo'}, last_name='Pool', age=24, sports=['Soccer'])
-
-	Modified from:
-	https://stackoverflow.com/questions/2352181/how-to-use-a-dot-to-access-members-of-dictionary
-	to set unlimited chained .variables like DotDict().tom.bob = 3
-	'''
-
-	def __init__(self, *args, **kwargs):
-		super(DotDict, self).__init__(*args, **kwargs)
-		for arg in args:
-			if isinstance(arg, dict):
-				for k, v in arg.items():
-					self[k] = v
-
-		if kwargs:
-			for k, v in kwargs.items():
-				self[k] = v
-
-	def __getattr__(self, attr):
-		if attr in self:
-			return self.get(attr)
-		else:
-			self[attr] = DotDict()
-			return self[attr]
-
-	def __setattr__(self, key, value):
-		self.__setitem__(key, value)
-
-	def __contains__(self, key):
-		return bool(key in self.__dict__)
-
-	def __setitem__(self, key, value):
-		super(DotDict, self).__setitem__(key, value)
-		self.__dict__.update({key: value})
-
-	def __delattr__(self, item):
-		self.__delitem__(item)
-
-	def __delitem__(self, key):
-		super(DotDict, self).__delitem__(key)
-		del self.__dict__[key]
 
 
 def json_loader(data):
@@ -361,6 +259,16 @@ def rfs(num, mult=1000, digits=3, order=' KMGTPEZY', suffix='B', space=' '):
 	return str(num) + suffix		#Never called, but needed for pylint
 
 
+def mkdir(target, exist_ok=True, **kargs):
+	"Make a directory without fuss"
+	os.makedirs(target, exist_ok=exist_ok, **kargs)
+
+
+def samepath(*paths):
+	"Are any of these file pathname duplicates?"
+	return bool(len({os.path.abspath(path) for path in paths}) != len(paths))
+
+
 class Eprinter:
 	'''Drop in replace to print errors if verbose level higher than setup level
 	To replace every print statement type: from common import eprint as print
@@ -444,14 +352,128 @@ def error(*args, header='\nError:', err=RuntimeError, **kargs):
 	raise err
 
 
-def mkdir(target, exist_ok=True, **kargs):
-	"Make a directory without fuss"
-	os.makedirs(target, exist_ok=exist_ok, **kargs)
+def map_nested(func, array):
+	"Apply a function to a nested array and return it"
+	out = []
+	for item in array:
+		if type(item) not in (tuple, list):
+			out.append(func(item))
+		else:
+			out.append(map_nested(func, item))
+	return out
 
 
-def samepath(*paths):
-	"Are any of these file pathname duplicates?"
-	return bool(len({os.path.abspath(path) for path in paths}) != len(paths))
+class DotDict(dict):
+	'''
+	Example:
+	m = dotdict({'first_name': 'Eduardo'}, last_name='Pool', age=24, sports=['Soccer'])
+
+	Modified from:
+	https://stackoverflow.com/questions/2352181/how-to-use-a-dot-to-access-members-of-dictionary
+	to set unlimited chained .variables like DotDict().tom.bob = 3
+	'''
+
+	def __init__(self, *args, **kwargs):
+		super(DotDict, self).__init__(*args, **kwargs)
+		for arg in args:
+			if isinstance(arg, dict):
+				for k, v in arg.items():
+					self[k] = v
+
+		if kwargs:
+			for k, v in kwargs.items():
+				self[k] = v
+
+	def __getattr__(self, attr):
+		if attr in self:
+			return self.get(attr)
+		else:
+			self[attr] = DotDict()
+			return self[attr]
+
+	def __setattr__(self, key, value):
+		self.__setitem__(key, value)
+
+	def __contains__(self, key):
+		return bool(key in self.__dict__)
+
+	def __setitem__(self, key, value):
+		super(DotDict, self).__setitem__(key, value)
+		self.__dict__.update({key: value})
+
+	def __delattr__(self, item):
+		self.__delitem__(item)
+
+	def __delitem__(self, key):
+		super(DotDict, self).__delitem__(key)
+		del self.__dict__[key]
+
+
+def list_get(lis, index, default=''):
+
+	# Fetch a value from a list if it exists, otherwise return default
+	# Now accepts negative indexes
+	length = len(lis)
+	if -length <= index < length:
+		return lis[index]
+	else:
+		return default
+
+
+def sort_array(array, *columns, **kargs):
+	'''Sort an array by an arbitrary number of columns
+	Specify most important column first or leave blank to go left to right
+	Starting with Python 2.3, the sort() method is guaranteed to be stable.
+	https://docs.python.org/2/library/stdtypes.html#index-29
+	'''
+	if not array:
+		return array
+	if not columns:
+		columns = list(range(len(array[0])))
+	for col in reversed(columns):
+		array.sort(key=lambda x: x[col], **kargs)
+
+
+def query(*question, confirmation='', negation=''):
+	'''Ask the user a question. They can type y Y yes Yes and so on.
+	Return True if yes, False if No
+	If confirmation is passed, then the user must type the same word as confirmation to return True
+	If negation is passed user can type the negation word to return False'''
+
+	if not question:
+		question = ("Continue?",)
+	msg = ' '.join(question)
+
+	while True:
+		response = input(msg + ' ')
+		response = response.strip().lower()
+		if not response:
+			continue
+
+		# Have user confirm
+		if response and confirmation:
+			if response == confirmation.strip().lower():
+				return True
+			if negation:
+				if response == negation.strip().lower():
+					return False
+				else:
+					continue
+			else:
+				return False
+
+		# Convert response to a single letter y or n
+		if response:
+			response = response[0]
+			if response == 'y':
+				return True
+			elif response == 'n':
+				return False
+
+
+def str_insert(string, index, sub):
+	#return string[:index] + sub + string[index:]
+	return ''.join((string[:index], sub, string[index:]))
 
 
 eprint = Eprinter(verbose=1).eprint     # pylint: disable=C0103
