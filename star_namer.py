@@ -41,12 +41,12 @@ def main():
 
 
 	mymod = universe.load_mod(args.module)
-	modname = universe.get_mod_name(mymod)
+	modname = universe.get_modname(mymod)
 	modvars = universe.get_members(args.module)
 	print("Found defined variables in module", modname+':')
 	out = [['Name:', 'Module:', 'Function:']]
 	for name, func in modvars.items():
-		out.append([name, universe.get_mod_name(inspect.getmodule(func)), func])
+		out.append([name, universe.get_modname(inspect.getmodule(func)), func])
 	auto_cols(out)
 	print("\n")
 
@@ -60,7 +60,7 @@ def main():
 		if functions:
 			out = dict()
 			for name, func in functions.items():
-				mod = universe.get_mod_name(inspect.getmodule(func))
+				mod = universe.get_modname(inspect.getmodule(func))
 				if mod in args.exclude:
 					continue
 				if args.local and mod != modname:

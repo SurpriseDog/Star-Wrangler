@@ -2,6 +2,7 @@
 # Convert a python file with from import function_name to module.function_name
 # Usage: from_to_import.py <script name> <modname>
 
+import re
 import sys
 import universe
 
@@ -69,7 +70,8 @@ def convert(source, modname):
 def main():
 	if len(sys.argv) == 3:
 		filename = sys.argv[1]
-		modname = sys.argv[2]
+		modname = sys.argv[2].replace('/', '.')
+		modname = re.sub('\.py$', '', modname)
 	else:
 		print("Usage: from_to_import.py <script name> <modname>")
 		sys.exit(1)

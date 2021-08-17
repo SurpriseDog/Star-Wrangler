@@ -28,10 +28,12 @@ class ArgMaster():
 	other arguments are passed onto the ArgumentParser constructor
 	'''
 
-	def __init__(self, sortme=True, allow_abbrev=True, usage=None, description=None, newline='\n', **kargs):
+	def __init__(self, sortme=True, allow_abbrev=True, usage=None, description=None, newline='\n',
+				 verbose=False, **kargs):
 		self.sortme = sortme            # Sort all non positionals args
 		self.groups = []                # List of all groups
 		self.usage = usage				# Usage message
+		self.verbose = verbose
 		self.newline = newline			# Newlines in print_help
 		self.description = description
 		self.parser = ArgumentParser(allow_abbrev=allow_abbrev, add_help=False, usage=SUPPRESS, **kargs)
@@ -40,7 +42,7 @@ class ArgMaster():
 
 	def update(self, args, title=None, sortme=None, **kargs):
 		group = self.parser.add_argument_group(title)
-		args = update_parser(args, group, **kargs)
+		args = update_parser(args, group, verbose=self.verbose, **kargs)
 		self.groups.append(DotDict(args=args, title=title, sortme=sortme))
 
 	def parse(self, args=None, am_help=True, **kargs):

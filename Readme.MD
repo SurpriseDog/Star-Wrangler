@@ -28,6 +28,9 @@ You can edit the shared.py variables to correct the installation path to pylint.
 
 Usage: ./star_wrangler.py module_filename script 1 script 2 ...
 
+Example: ./star_wrangler.py sd/common.py *.py
+will run the script on itself, pulling every function used in common.py and generating a new file.
+
 Get help with -h
 
 ----

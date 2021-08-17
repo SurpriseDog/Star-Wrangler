@@ -19,7 +19,6 @@ from sd.columns import indenter, tab_printer, auto_cols
 from sd.common import samepath, mkdir, error, rfs, plural, warn, quickrun as qrun
 
 #Build: wrangler star_wrangler.py star_namer.py universe.py --dir . --name star_common
-
 def get_args():
 	"Get user arguments"
 
@@ -33,7 +32,9 @@ def get_args():
 		['max', 'max_level', int, 9],
 		"Maxmimum recursion level when searching for function references",
 		['nofollow', '', bool],
-		"Don't Follow imports to new modules instead of scraping import lines",
+		"Don't follow imports to new modules instead of scraping import lines",
+		['modnames', '', list],
+		"Instead of searching for import lines with the module name, supply your own list",
 		['ignore', '', list],
 		"Ignore modules with the following names...",
 		['functions', '', list],
@@ -59,6 +60,12 @@ def get_args():
 		if len(args.filenames) != 1:
 			error("--onefile mode can only be used with a single file")
 
+	# Convert ignored files to modnames (if applicable)
+	for index, name in enumerate(args.ignore):
+		if os.path.exists(name):
+			new = ''.join(os.path.basename(name).split('.py')[:-1])
+			args.ignore[index] = new
+			print("Extracted", new, 'from', name)
 	return args
 
 
@@ -134,7 +141,7 @@ class Processor():
 		if not mod:
 			mod = caller_mod
 		iprint('Module:', mod)
-		modname = universe.get_mod_name(mod)
+		modname = universe.get_modname(mod)
 		if modname in self.ignore:
 			return False
 		modvars = vars(mod)
@@ -241,11 +248,11 @@ def show_loc(proc):
 def main():
 	args = get_args()
 	mymod = universe.load_mod(args.mymod)
-	mod_name = universe.get_mod_name(mymod)
+	modname = universe.get_modname(mymod)
 	members = dict(inspect.getmembers(mymod))
 	output_name = args.output_name.rstrip('.py')
 	if output_name == 'same':
-		output_name = mod_name
+		output_name = modname
 	filenames = args.filenames
 
 
@@ -258,7 +265,7 @@ def main():
 		error("Cannot overwrite self!")
 	mkdir('/tmp/Star_Wrangler')
 
-	print(mod_name, 'functions:')
+	print(modname, 'functions:')
 	auto_cols([(name, str(func).replace('\n', ' ')) for name, func in sorted(members.items())], crop={1:200})
 	print("\n")
 
@@ -272,17 +279,20 @@ def main():
 		functions = proc.process_words(args.functions)
 	else:
 		for filename in filenames:
-			# dirname = os.path.dirname(filename)
 			line_nums = set()
 			imports = []
 			with open(filename) as f:
 				source = f.read()
+				# Go through file source and remove "import modname"
+				terms = args.modnames if args.modnames else [modname,]
 				for num, line in universe.scrape_imports(source):
-					if mod_name in line:
+					# if modname in line:
+					if any(name in line for name in terms):
+						print(line)
 						line_nums.add(num)
 						imports.append(re.sub('.*import ', '', line))
 			if not imports:
-				warn("Could not find any common imports in", filename, "for module name:", mod_name, delay=0)
+				warn("Could not find any common imports in", filename, "for module name:", modname, delay=0)
 			else:
 				file_imports[filename] = imports
 				imports = [re.sub(' as .*$', '', word) for word in imports]
@@ -367,8 +377,7 @@ def main():
 	qrun('chmod', '+x', output_filename)
 	print("\nCopy to script directory with:")
 	print('cp', output_filename,
-		  os.path.join(os.path.dirname(os.path.realpath(filename)), os.path.basename(output_filename)))
-
+		  os.path.join(os.path.dirname(filename), os.path.basename(output_filename)))
 
 
 if __name__ == "__main__":

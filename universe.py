@@ -89,7 +89,6 @@ def get_undefined(source):
 				input=source, hidewarning=True)
 	for item in json_loader('\n'.join(data)):
 		idc = item['message-id']
-		msg = item['message']
 		if idc == 'E0602':          # undefined variable:
 			yield item
 
@@ -168,11 +167,11 @@ def get_class_that_defined_method(meth):
 	return getattr(meth, '__objclass__', None)  # handle special descriptor objects
 
 
-def get_mod_name(mod):
+def get_modname(mod):
 	"Get module name"
-	cache = CACHED.get_mod_name			# Dict of functions to undefined words
+	cache = CACHED.get_modname			# Dict of functions to undefined words
 
-	# print("get_mod_name:", mod)
+	# print("get_modname:", mod)
 	if mod not in cache:
 		if hasattr(mod, '__file__'):
 			name = ''.join(os.path.basename(mod.__file__).split('.py')[:-1])
@@ -225,7 +224,17 @@ def scrape_wildcard(filename, modvars):
 
 def load_mod(filename):
 	"Load a module given a filename"
-	'''
+	backup = sys.path.copy()
+	sys.path.insert(0, os.path.dirname(filename))
+	name = os.path.basename(filename)
+	name = os.path.splitext(name)[0]
+	print("Loading", name, 'from', sys.path[0])
+	mod = importlib.import_module(name)
+	sys.path = backup
+	return mod
+
+'''
+def load_mod(filename):
 	# Fails with a class: https://stackoverflow.com/q/67663614/11343425
 	name = os.path.basename(filename)
 	name = os.path.splitext(name)[0]
@@ -236,7 +245,11 @@ def load_mod(filename):
 		spec.loader.exec_module(mymod)
 		os.chdir('/mnt/3/data/scripts/master')
 	return mymod
-	'''
+'''
+
+'''
+def load_mod(filename):
+	# Fails in non-interactive mode???
 	name = os.path.basename(filename)
 	name = os.path.splitext(name)[0]
 	cur = os.getcwd()
@@ -247,6 +260,7 @@ def load_mod(filename):
 	mod = importlib.import_module(name)
 	os.chdir(cur)
 	return mod
+'''
 
 
 def get_members(filename):
