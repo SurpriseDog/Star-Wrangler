@@ -6,7 +6,8 @@ import sys
 from argparse import ArgumentParser, SUPPRESS
 
 from sd.common import list_get, DotDict
-from sd.columns import auto_cols, undent
+from sd.columns import auto_cols
+from sd.common import undent
 
 
 def easy_parse(optionals_list, pos_list=None, **kargs):
@@ -247,7 +248,8 @@ def update_parser(lines, parser=None, hidden=False, positionals=False, verbose=F
 		if typ == list:
 			nargs = '*'
 			typ = str
-			default = []
+			if default == '':
+				default = []
 		elif isinstance(typ, int):
 			if positionals and typ == 1:
 				nargs = None

@@ -6,11 +6,6 @@ from sd.common import map_nested
 
 TERM_WIDTH = max(get_terminal_size().columns, 20)
 
-def undent(text, tab=''):
-	"Remove whitespace at the beginning of lines of text"
-	return '\n'.join([tab + line.lstrip() for line in text.splitlines()])
-
-
 def indenter(*args, header='', level=0, tab=4, wrap=-4, even=False):
 	'''
 	Break up text into tabbed lines.
