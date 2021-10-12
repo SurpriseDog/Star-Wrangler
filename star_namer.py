@@ -10,7 +10,7 @@ import inspect
 import universe
 from sd.common import error, eprint
 from sd.columns import indenter, auto_cols
-from sd.arg_master import easy_parse
+from sd.easy_args import easy_parse
 
 
 def main():

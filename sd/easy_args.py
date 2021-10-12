@@ -1,11 +1,12 @@
 #!/usr/bin/python3
+# Learn more about how this works by visiting: https://github.com/SurpriseDog/EasyArgs
 
-import re
 import os
+import re
 import sys
 from argparse import ArgumentParser, SUPPRESS
 
-from sd.common import list_get, DotDict
+from sd.common import list_get
 from sd.columns import auto_cols
 from sd.common import undent
 
@@ -19,7 +20,15 @@ def easy_parse(optionals_list, pos_list=None, **kargs):
 	if pos_list:
 		am.update(pos_list, title="Positional Arguments", positionals=True)
 	am.update(optionals_list, title="Optional Arguments")
-	return am.parse(argfixer())
+	return am.parse()
+
+
+def show_args(uargs):
+	"Show the arguments returned"
+	if not uargs:
+		return
+	auto_cols(sorted([[key, repr(val)] for key, val in (vars(uargs)).items()]))
+	print()
 
 
 class ArgMaster():
@@ -30,23 +39,29 @@ class ArgMaster():
 	'''
 
 	def __init__(self, sortme=True, allow_abbrev=True, usage=None, description=None, newline='\n',
-				 verbose=False, **kargs):
+				 verbose=False, exit=True, **kargs):
+
+		# Parsing
+		self.verbose = verbose			# Print what each argument does
+		self.dashes = ('-', '--')		# - or -- before argument
+		self.exit = exit				# Quit on error
+
+		# Help Formatting:
 		self.sortme = sortme            # Sort all non positionals args
-		self.groups = []                # List of all groups
 		self.usage = usage				# Usage message
-		self.verbose = verbose
-		self.newline = newline			# Newlines in print_help
 		self.description = description
+		self.newline = newline			# Newlines in print_help
+		self.autoformat = True			# Capitalize sentences and add a period
+
+		# Internal
 		self.parser = ArgumentParser(allow_abbrev=allow_abbrev, add_help=False, usage=SUPPRESS, **kargs)
+		self.groups = []                # List of all groups
+
 		# Allow optionals before positionals:
 		self.intermixed = hasattr(self.parser, 'parse_intermixed_args')
 
-	def update(self, args, title=None, sortme=None, **kargs):
-		group = self.parser.add_argument_group(title)
-		args = update_parser(args, group, verbose=self.verbose, **kargs)
-		self.groups.append(DotDict(args=args, title=title, sortme=sortme))
-
 	def parse(self, args=None, am_help=True, **kargs):
+		"Parse the args and return them"
 		if not args:
 			args = sys.argv[1:]
 
@@ -58,7 +73,9 @@ class ArgMaster():
 		for arg in args:
 			if re.match('--*h$|--*help$', arg):
 				self.print_help(**kargs)
-				sys.exit(0)
+				if self.exit:
+					sys.exit(0)
+				return None
 		try:
 			if self.intermixed:
 				return self.parser.parse_intermixed_args(args)
@@ -66,7 +83,8 @@ class ArgMaster():
 				return self.parser.parse_args(args)
 		except SystemExit:
 			self.print_help(**kargs)
-			sys.exit(0)
+			if self.exit:
+				sys.exit(0)
 
 
 	def print_help(self, show_type=True, wrap=-4, tab='  '):
@@ -89,25 +107,24 @@ class ArgMaster():
 		width = 0                       # Max width of the variables column
 		for group in self.groups:
 			out = []
-			for args in group.args:
-				args = DotDict(args)
-				msg = args.msg
+			for args in group['args']:
+				msg = args['msg']
 				if msg == SUPPRESS:
 					continue
-				alias = args.alias
+				alias = args['alias']
 				if show_type:
-					if args.typ and args.typ != bool:
-						if args.typ == list:
+					if args['typ'] and args['typ'] != bool:
+						if args['typ'] == list:
 							typ = '...'
 						else:
-							typ = '<' + str(args.typ).replace('class ', '')[2:-2] + '>'
+							typ = '<' + str(args['typ']).replace('class ', '')[2:-2] + '>'
 						alias += ' ' + typ
 				if len(alias) > width:
 					width = len(alias)
 				out.append([alias, msg])
 
-			if group.sortme is not None:
-				sortme = group.sortme
+			if group['sortme'] is not None:
+				sortme = group['sortme']
 			else:
 				sortme = self.sortme
 			if sortme:
@@ -123,162 +140,164 @@ class ArgMaster():
 				print(self.newline, end='')
 				for line, _ in enumerate(out):
 					out[line][0] = tab + out[line][0].ljust(width)
-				if group.title:
-					print(group.title)	#.rstrip(':') + ':')
-				if group.description:
-					auto_cols([[tab + group.description]], wrap=wrap)
+				if 'title' in group:
+					print(group['title'])	#.rstrip(':') + ':')
+				if 'description' in group:
+					auto_cols([[tab + group['description']]], wrap=wrap)
 				auto_cols(out, wrap=wrap)
 		print()
 
 
-def argfixer():
-	'''Fix up args for argparse. Lowers case and turns -args into --args'''
-	out = []
-	for word in sys.argv:
-		if word.startswith('-'):
-			word = word.lower()
-		if re.match('^-[^-]', word):
-			out.append('-' + word)
-		else:
-			out.append(word)
-	return out[1:]
+	def update(self, args, title=None, sortme=None, **kargs):
+		"Pass list to update_parser() and append result to parser"
+		group = self.parser.add_argument_group(title)
+		args = self.update_parser(args, group, **kargs)
+		self.groups.append(dict(args=args, title=title, sortme=sortme))
 
 
-def update_parser(lines, parser=None, hidden=False, positionals=False, verbose=False):
-	'''
-	This is a more intuitive method for adding optional arguments.
-
-		Example:
-
-		basic_args = [\
-		('alias', 'variable_name', type, default),
-		"help string",
-		...
-		]
-
-		group_basic = parser.add_argument_group('Basic Arguments', '')
-		update_parser(basic_args, group_basic)
-
-	You only need to include the arguments required, but you can't skip over any.
-		('alias', '',)        # okay
-		('alias', type,)      # not okay
-
-	Substitute the word list with a number like "2" to get that number of args required.
-		('list-args, '', 2)
-
-	Positional arguments are optional by default, but you can specify a number to make them required.
-	To use them, make sure to pass: positionals=True to update_parser
-
-		('pos-arg', '', 1)
-
-	See what your arguments are producing by passing verbose=True or by doing:
-		auto_cols(sorted([[key, repr(val)] for key, val in (vars(parse_args())).items()]))
+	def update_parser(self, lines, parser=None, hidden=False, positionals=False):
+		'''
+		A more intuitive method for adding arguments
+		parser can be empty to return a new parser or a parser argument group
+		hidden = Suppress arguments from showing up in help
+		positionals = Make group positional arguments
+		verbose = Show verbosely how each line in the array is added to argparse
 
 
-	'''
+		Format:
+			Pass an array with lines in the format:
 
-	# Make sure the loop ends on a help string
-	if not isinstance(lines[-1], str):
-		lines.append("")
+				('alias', 'variable_name', type, default),
+				"help string",
 
-	alias = None        #
-	varname = None      # Variable Name
-	default = None      # Default value
-	out = []
+			You only need to include the fields required, but you can't skip over any.
+				('alias', '',)        # okay
+				('alias', type,)      # not okay
 
-	def update():
-		nonlocal alias
-		"# Update argument to parser:"
-		if parser:
-			if positionals:
-				parser.add_argument(varname, default=default, nargs=nargs, help=msg)
-			else:
-				alias = '--' + alias
-				if typ == bool:
-					parser.add_argument(alias, dest=varname, default=default, action=action, help=msg)
+			Substitute the word list with a number like "2" to get that number of args required.
+				('list-args, '', 2)
+
+			Positional arguments are optional by default, but you can specify a number to make them required.
+			To use them, make sure to pass: positionals=True to update_parser
+
+				('pos-arg', '', 1)
+
+		See what your arguments are producing by passing verbose=True or running easy_args.show_args(args)
+		'''
+
+		# Make sure the loop ends on a help string
+		if not isinstance(lines[-1], str):
+			lines.append("")
+
+		alias = None        # --variable name
+		varname = None      # Variable Name
+		default = None      # Default value
+		out = []
+
+		def update():
+			nonlocal alias
+			"# Update argument to parser:"
+			if parser:
+				if positionals:
+					parser.add_argument(varname, default=default, nargs=nargs, help=msg)
 				else:
-					parser.add_argument(alias, dest=varname, default=default, type=typ,
-										nargs=nargs, help=msg, metavar='')
-			out.append(dict(alias=alias, dest=varname, typ=typ, default=default, msg=msg))
-			if verbose:
-				print('alias  :', alias)
-				print('dest   :', varname)
-				print('default:', default)
-				print('type   :', typ)
-				print('nargs  :', nargs, '\n\n')
+					# alias = '--' + alias
+					aliases = [d + alias for d in self.dashes]
+					if typ == bool:
+						parser.add_argument(*aliases, dest=varname, default=default, action=action, help=msg)
+					else:
+						parser.add_argument(*aliases, dest=varname, default=default, type=typ,
+											nargs=nargs, help=msg, metavar='')
+				out.append(dict(alias=alias, dest=varname, typ=typ, default=default, msg=msg))
+				if self.verbose:
+					print('alias  :', alias)
+					print('dest   :', varname)
+					print('default:', default)
+					print('type   :', typ)
+					print('nargs  :', nargs, '\n\n')
 
-	for index, args in enumerate(lines):
+		for index, args in enumerate(lines):
 
-		# Add help if available
-		if isinstance(args, str):
-			msg = undent(args.strip())
-			if msg and not msg.endswith('.'):
-				last = msg.split()[-1]
-				if last[-1].isalnum() and not last.startswith('-'):
-					msg = msg + '.'
-			if default:
-				msg += "  Default: " + str(default)
+			# Add help if available
+			if isinstance(args, str):
+				msg = undent(args.strip())
+				if self.autoformat:
+					msg = msg.title()
+					if msg and not msg.endswith('.'):
+						last = msg.split()[-1]
+						if last[-1].isalnum() and not last.startswith('-'):
+							msg = msg + '.'
+				if default:
+					msg += "  Default: " + str(default)
 
-		if hidden:
-			# Hide the help text:
-			msg = SUPPRESS
+			if hidden:
+				# Hide the help text:
+				msg = SUPPRESS
 
-		# If on a new tuple line, add_argument
-		if alias or varname:
-			update()
-			alias = None
-			varname = None
-			msg = ""
+			# If on a new tuple line, add_argument
+			if alias or varname:
+				update()
+				alias = None
+				varname = None
+				msg = ""
 
-		# Continue if not on a new tuple line
-		if isinstance(args, str):
-			continue
+			# Continue if not on a new tuple line
+			if isinstance(args, str):
+				continue
 
-		# Read the values from the tuple:
-		alias = args[0].lstrip('-')
+			# Read the values from the tuple:
+			alias = args[0].lstrip('-')
 
-		# Variable Name
-		varname = list_get(args, 1)
-		if not varname:
-			varname = alias
+			# Variable Name
+			varname = list_get(args, 1)
+			if not varname:
+				varname = alias
 
-		# Argument Type and number required
-		default = list_get(args, 3, '')
-		typ = list_get(args, 2, type(default))
-		if typ == list:
-			nargs = '*'
-			typ = str
-			if default == '':
-				default = []
-		elif isinstance(typ, int):
-			if positionals and typ == 1:
-				nargs = None
+			# Type
+			typ = list_get(args, 2, str)
+
+
+			# Default value
+			if typ == list or type(typ) == int:
+				default = list_get(args, 3, [])
 			else:
-				nargs = typ
-			typ = str
-		else:
-			nargs = '?'
+				default = list_get(args, 3, '')
 
-		# Special handing for booleans
-		if typ == bool:
-			if default:
-				action = 'store_false'
+
+			# Argument Type and number required
+			if typ == list:
+				nargs = '*'
+				typ = str
+			elif isinstance(typ, int):
+				if positionals and typ == 1:
+					nargs = None
+				else:
+					nargs = typ
+				typ = str
 			else:
-				action = 'store_true'
-				default = False
-		if index == len(lines) - 1:
-			update()
+				nargs = '?'
 
-	return out
+			# Special handing for booleans
+			if typ == bool:
+				if default:
+					action = 'store_false'
+				else:
+					action = 'store_true'
+					default = False
+			if index == len(lines) - 1:
+				update()
+
+		return out
 
 
 def help_parser(parser, show_type=True, sortme=True, wrap=100, tab='  '):
+	"Standalone version of help that only needs an argparse parser"
 	'''Print a custom help message from the ArgumentParser class
 		show_type = append the variable type expected after each optional argument.
 		--arg <int> <int> will expect 2 integers after the arg
 		wrap = word wrap instead of using full terminal. 0 = disable
 		sort = sort alphabetically. Positional variables are never sorted.
-		To sort individual groups, add a special key: group.sortme = True
+		To sort individual groups, add a special key: group['sortme'] = True
 
 		Warning: If your variable is not in a group, it will not be shown!
 	'''
