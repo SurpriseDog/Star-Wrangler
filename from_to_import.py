@@ -71,7 +71,7 @@ def main():
 	if len(sys.argv) == 3:
 		filename = sys.argv[1]
 		modname = sys.argv[2].replace('/', '.')
-		modname = re.sub('\.py$', '', modname)
+		modname = re.sub('.py$', '', modname)
 	else:
 		print("Usage: from_to_import.py <script name> <modname>")
 		sys.exit(1)

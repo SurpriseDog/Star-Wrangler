@@ -70,7 +70,7 @@ def undefined(func):
 
 	code = '\n'.join(getsource(func))
 	data = qrun(get_pylint(), '--from-stdin stdin --output-format=json --disable=W0312'.split(),
-				input=code, hidewarning=True)
+				stdin=code, hidewarning=True)
 
 	words = set()
 	for item in json_loader('\n'.join(data)):
@@ -86,7 +86,7 @@ def undefined(func):
 def get_undefined(source):
 	"Run souce code through pylint and get each undefined variable"
 	data = qrun(get_pylint(), '--from-stdin stdin --output-format=json --disable=W0312'.split(),
-				input=source, hidewarning=True)
+				stdin=source, hidewarning=True)
 	for item in json_loader('\n'.join(data)):
 		idc = item['message-id']
 		if idc == 'E0602':          # undefined variable:
